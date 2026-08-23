@@ -21,6 +21,7 @@ class ProductResource extends Resource
     protected static ?string $navigationLabel = 'Готовые изделия';
     protected static ?string $modelLabel = 'Изделие';
     protected static ?string $pluralModelLabel = 'Изделия';
+    protected static ?int $navigationSort = 2;
 
     public static function form(Form $form): Form
     {
@@ -50,7 +51,7 @@ class ProductResource extends Resource
                             ->required()
                             ->live(),
                 ])->columns(3),
-                // Секция 2: Умный калькулятор заготовок (BOM)
+                // Секция 2: Нормы расхода сырья и комплектации (BOM)
                 Forms\Components\Section::make('Нормы расхода сырья и комплектации (BOM)')
                     ->description('Выберите параметры материала и укажите габариты заготовки для авторасчета')
                     ->visible(fn (Get $get) => $get('type') === 'detail')
@@ -88,7 +89,19 @@ class ProductResource extends Resource
                                     ->required()
                                     ->live()
                                     ->disabled(fn (Get $get) => !$get('material_type'))
-                                    ->afterStateUpdated(fn (Set $set) => $set('material_id', null)),
+                                    // МАГИЯ АВТОПОДБОРА ID: Прячет лишнее поле сортамента для покупных изделий
+                                    ->afterStateUpdated(function (Get $get, Set $set, $state) {
+                                        if ($get('material_type') === 'Покупное изделие' && $state) {
+                                            $material = Material::where('name', 'Покупное изделие')
+                                                ->where('grade', $state)
+                                                ->first();
+                                            if ($material) {
+                                                $set('material_id', $material->id);
+                                            }
+                                        } else {
+                                            $set('material_id', null);
+                                        }
+                                    }),
 
                                 Forms\Components\Select::make('material_id')
                                     ->label('Профиль / Сортамент со склада')
@@ -109,7 +122,9 @@ class ProductResource extends Resource
                                     })
                                     ->searchable()
                                     ->preload()
-                                    ->required()
+                                    // ИСПРАВЛЕНО: Скрыто и необязательно для покупных изделий
+                                    ->required(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
+                                    ->visible(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
                                     ->live()
                                     ->disabled(fn (Get $get) => !$get('material_grade')),
 
@@ -147,7 +162,11 @@ class ProductResource extends Resource
                                     ->disabled(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
                                     ->dehydrated()
                                     ->prefix('📊')
-                                    ->visible(fn (Get $get) => filled($get('material_id'))),
+                                    // УМНАЯ ВИДИМОСТЬ: Открывается сразу для покупных изделий
+                                    ->visible(fn (Get $get) => match ($get('material_type')) {
+                                        'Покупное изделие' => filled($get('material_grade')),
+                                        default => filled($get('material_id'))
+                                    }),
                             ])
                             ->columns(3)
                             ->defaultItems(0)
@@ -184,7 +203,7 @@ class ProductResource extends Resource
                             ->addActionLabel('Добавить деталь в состав сборки'),
                     ]),
 
-                // Секция 4: НАСТРОЙКА ТЕХПРОЦЕССА
+                // Секция 4: Настройка техпроцесса
                 Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
                     ->description('Составьте пошаговый маршрут обработки детали и укажите нормы времени')
                     ->visible(fn (Get $get) => $get('type') === 'detail')
