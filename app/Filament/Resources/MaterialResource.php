@@ -29,106 +29,103 @@ class MaterialResource extends Resource
 
 public static function form(Form $form): Form
 {
-    return $form
-        ->schema([
-            Forms\Components\Section::make('Основная информация')
-                ->schema([
-                    Forms\Components\Select::make('name')
-                        ->label('Наименование (Тип)')
-                        ->options([
-                            'Пруток' => 'Пруток',
-                            'Труба' => 'Труба',
-                            'Плита' => 'Плита',
-                        ])
-                        ->required()
-                        ->live(), // Динамически перерисовывает форму при изменении
+   // Проверка: является ли текущий пользователь сотрудником цеха/склада (не админом)
+$isNotAdmin = !auth()->user()->isAdmin();
 
-                    Forms\Components\TextInput::make('grade')
-                        ->label('Марка стали / Сплав')
-                        ->placeholder('Ст3, 09Г2С, AISI 304')
-                        ->required(),
-                ])->columns(2),
+return $form
+    ->schema([
+        Forms\Components\Section::make('Основная информация')
+            ->schema([
+                Forms\Components\Select::make('name')
+                    ->label('Наименование (Тип)')
+                    ->options([
+                        'Пруток' => 'Пруток',
+                        'Труба' => 'Труба',
+                        'Плита' => 'Плита',
+                    ])
+                    ->required()
+                    ->live()
+                    ->disabled($isNotAdmin), // Блокируем для не-админов
 
-            Forms\Components\Section::make('Характеристики геометрии')
-                ->schema([
-                    // ЕДИНОЕ УНИВЕРСАЛЬНОЕ ПОЛЕ ДЛИНЫ (Решает проблему дублирования)
-                    Forms\Components\TextInput::make('length')
-                        ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Длина плиты (мм)' : 'Длина единицы / хлыста (м)')
-                        ->numeric()
-                        ->minValue(0)
-                        ->placeholder(fn (Get $get): string => $get('name') === 'Плита' ? '' : '6.00')
-                        ->suffix(fn (Get $get): string => $get('name') === 'Плита' ? ' мм' : ' метров')
-                        ->required()
-                        ->live(onBlur: true)
-                        ->afterStateUpdated(function (Get $get, Set $set) {
-                            // Пересчитываем площадь только если выбрана Плита
-                            if ($get('name') === 'Плита') {
-                                $length = floatval($get('length'));
-                                $width = floatval($get('width'));
-                                if ($length > 0 && $width > 0) {
-                                    $area = ($length * $width) / 1000000; // мм² в м²
-                                    $set('quantity', round($area, 4));
-                                }
-                            }
-                        }),
+                Forms\Components\TextInput::make('grade')
+                    ->label('Марка стали / Сплав')
+                    ->required()
+                    ->disabled($isNotAdmin), // Блокируем для не-админов
+            ])->columns(2),
 
-                    // Поле только для Прутка и Трубы
-                    Forms\Components\TextInput::make('diameter')
-                        ->label('Диаметр (мм)')
-                        ->numeric()
-                        ->minValue(0)
-                        ->required()
-                        ->visible(fn (Get $get): bool => in_array($get('name'), ['Пруток', 'Труба'])),
-
-                    // Поля только для Плиты
-                    Forms\Components\TextInput::make('thickness')
-                        ->label('Толщина плиты (мм)')
-                        ->numeric()
-                        ->minValue(0)
-                        ->required()
-                        ->visible(fn (Get $get): bool => $get('name') === 'Плита'),
-
-                    Forms\Components\TextInput::make('width')
-                        ->label('Ширина плиты (мм)')
-                        ->numeric()
-                        ->minValue(0)
-                        ->required()
-                        ->live(onBlur: true)
-                        ->visible(fn (Get $get): bool => $get('name') === 'Плита')
-                        ->afterStateUpdated(function (Get $get, Set $set) {
+        Forms\Components\Section::make('Характеристики геометрии')
+            ->schema([
+                Forms\Components\TextInput::make('length')
+                    ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Длина плиты (мм)' : 'Длина единицы / хлыста (м)')
+                    ->numeric()
+                    ->minValue(0)
+                    ->required()
+                    ->live(onBlur: true)
+                    ->disabled($isNotAdmin) // Блокируем для не-админов
+                    ->afterStateUpdated(function (Get $get, Set $set) {
+                        if ($get('name') === 'Плита') {
                             $length = floatval($get('length'));
                             $width = floatval($get('width'));
                             if ($length > 0 && $width > 0) {
-                                $area = ($length * $width) / 1000000; // мм² в м²
+                                $area = ($length * $width) / 1000000;
                                 $set('quantity', round($area, 4));
                             }
-                        }),
-                ])
-                ->visible(fn (Get $get): bool => filled($get('name')))
-                ->columns(3),
+                        }
+                    }),
 
-Forms\Components\Section::make('Складской остаток')
-    ->schema([
-        Forms\Components\TextInput::make('quantity')
-            ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Площадь плиты, м² (остаток)' : 'Текущий остаток на складе, м')
-            ->numeric()
-            ->default(0)
-            ->required()
-            ->helperText(fn (Get $get): ?string => $get('name') === 'Плита' ? 'Высчитывается автоматически в м²' : null),
+                Forms\Components\TextInput::make('diameter')
+                    ->label('Диаметр (мм)')
+                    ->numeric()
+                    ->required()
+                    ->visible(fn (Get $get): bool => in_array($get('name'), ['Пруток', 'Труба']))
+                    ->disabled($isNotAdmin), // Блокируем для не-админов
 
-        // ПОЛНОСТЬЮ СКРЫТОЕ ПОЛЕ: На экране его нет, но в БД оно пишет 'м' или 'м²'
-        Forms\Components\Hidden::make('unit')
-            ->default(fn (Get $get) => match ($get('name')) {
-                'Плита' => 'м²',
-                'Пруток', 'Труба' => 'м',
-                default => 'м'
-            })
-            // Заставляем Filament обновлять значение в фоне при смене типа материала
-            ->key(fn (Get $get) => 'hidden_unit_' . ($get('name') ?? 'default')),
-    ])->columns(1), // Переключили в 1 колонку, так как поле осталось всего одно
+                Forms\Components\TextInput::make('thickness')
+                    ->label('Толщина плиты (мм)')
+                    ->numeric()
+                    ->required()
+                    ->visible(fn (Get $get): bool => $get('name') === 'Плита')
+                    ->disabled($isNotAdmin), // Блокируем для не-админов
 
+                Forms\Components\TextInput::make('width')
+                    ->label('Ширина плиты (мм)')
+                    ->numeric()
+                    ->required()
+                    ->live(onBlur: true)
+                    ->visible(fn (Get $get): bool => $get('name') === 'Плита')
+                    ->disabled($isNotAdmin) // Блокируем для не-админов
+                    ->afterStateUpdated(function (Get $get, Set $set) {
+                        $length = floatval($get('length'));
+                        $width = floatval($get('width'));
+                        if ($length > 0 && $width > 0) {
+                            $area = ($length * $width) / 1000000;
+                            $set('quantity', round($area, 4));
+                        }
+                    }),
+            ])
+            ->visible(fn (Get $get): bool => filled($get('name')))
+            ->columns(3),
 
-        ]);
+        Forms\Components\Section::make('Складской остаток')
+            ->schema([
+                Forms\Components\TextInput::make('quantity')
+                    ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Площадь плиты, м² (остаток)' : 'Текущий остаток на складе, м')
+                    ->numeric()
+                    ->default(0)
+                    ->required()
+                    ->disabled($isNotAdmin) // Не-админы не могут вручную перезаписать остаток! Только через историю
+                    ->helperText(fn (Get $get): ?string => $get('name') === 'Плита' ? 'Высчитывается автоматически в м²' : null),
+
+                Forms\Components\Hidden::make('unit')
+                    ->default(fn (Get $get) => match ($get('name')) {
+                        'Плита' => 'м²',
+                        'Пруток', 'Труба' => 'м',
+                        default => 'м'
+                    })
+                    ->key(fn (Get $get) => 'hidden_unit_' . ($get('name') ?? 'default')),
+            ])->columns(1),
+    ]);
+
 }
 
 
@@ -216,6 +213,18 @@ public static function getRelations(): array
 public static function canViewAny(): bool
 {
     return auth()->user()->hasAnyRole(['admin', 'director', 'storekeeper']);
+}
+
+public static function canCreate(): bool
+{
+    // Кнопку "Создать новый материал" видит ТОЛЬКО администратор
+    return auth()->user()->role === 'admin';
+}
+
+public static function canDelete(\Illuminate\Database\Eloquent\Model $record): bool
+{
+    // Удалять материалы из базы данных может ТОЛЬКО админ
+    return auth()->user()->role === 'admin';
 }
 
 
