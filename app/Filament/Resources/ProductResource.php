@@ -169,9 +169,11 @@ class ProductResource extends Resource
         ];
     }
 
-    public static function canViewAny(): bool
-    {
-        return auth()->user()->hasAnyRole(['admin', 'manager']);
-    }
+public static function canViewAny(): bool
+{
+    return auth()->user()->hasAnyRole(['admin', 'director', 'technologist']);
+}
+
+
 } // Конец класса ProductResource
 

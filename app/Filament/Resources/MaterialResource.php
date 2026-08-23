@@ -213,4 +213,10 @@ public static function getRelations(): array
 }
 
 
+public static function canViewAny(): bool
+{
+    return auth()->user()->hasAnyRole(['admin', 'director', 'storekeeper']);
+}
+
+
 }

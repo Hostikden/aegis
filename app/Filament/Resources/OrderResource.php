@@ -148,4 +148,10 @@ class OrderResource extends Resource
             'edit' => Pages\EditOrder::route('/{record}/edit'),
         ];
     }
+
+    public static function canViewAny(): bool
+{
+    return auth()->user()->hasAnyRole(['admin', 'director', 'manager', 'worker']);
+}
+
 }
