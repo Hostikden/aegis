@@ -4,27 +4,34 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Material extends Model
 {
     use HasFactory;
 
-    // Добавьте 'diameter' и 'length' в этот массив
     protected $fillable = [
         'name',
         'grade',
+        'length',
+        'diameter',
         'thickness',
-        'size',
+        'width',
         'quantity',
+        'reserved', // <-- ДОБАВИЛИ РЕЗЕРВ
         'unit',
-            'width',
-        'diameter',  // <--- Разрешаем сохранение диаметра
-        'length',    // <--- Разрешаем сохранение длины хлыста
     ];
 
-    public function history(): \Illuminate\Database\Eloquent\Relations\HasMany
-{
-    return $this->hasMany(MaterialHistory::class)->latest(); // Свежие записи будут сверху
-}
+    /**
+     * Рассчитать чистый свободный остаток проката на складе (за вычетом брони)
+     */
+    public function getAvailableQuantityAttribute(): float
+    {
+        return max(0, $this->quantity - $this->reserved);
+    }
 
+    public function histories(): HasMany
+    {
+        return $this->hasMany(MaterialHistory::class);
+    }
 }

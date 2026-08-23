@@ -34,17 +34,18 @@ class MaterialResource extends Resource
                                 'Пруток' => 'Пруток',
                                 'Труба' => 'Труба',
                                 'Плита' => 'Плита',
+                                'Покупное изделие' => '📦 Покупное изделие (шт.)',
                             ])
                             ->required()
                             ->live()
                             ->disabled($isNotAdmin),
 
                         Forms\Components\TextInput::make('grade')
-                            ->label('Марка стали / Сплав')
+                            ->label('Марка стали / Наименование изделия')
+                            ->placeholder('09Г2С / Болт М12х40, Подшипник 204')
                             ->required()
                             ->disabled($isNotAdmin),
                     ])->columns(2),
-
                 Forms\Components\Section::make('Характеристики геометрии')
                     ->schema([
                         Forms\Components\TextInput::make('length')
@@ -66,7 +67,7 @@ class MaterialResource extends Resource
                             ->label('Толщина плиты (мм)')
                             ->numeric()
                             ->required()
-                            ->visible(fn (Get $get): bool => $get('name') === 'Плита' ? true : false)
+                            ->visible(fn (Get $get): bool => $get('name') === 'Пliта')
                             ->disabled($isNotAdmin),
 
                         Forms\Components\TextInput::make('width')
@@ -74,33 +75,35 @@ class MaterialResource extends Resource
                             ->numeric()
                             ->required()
                             ->live(onBlur: true)
-                            ->visible(fn (Get $get): bool => $get('name') === 'Плита' ? true : false)
+                            ->visible(fn (Get $get): bool => $get('name') === 'Плита')
                             ->disabled($isNotAdmin),
                     ])
-                    ->visible(fn (Get $get): bool => filled($get('name')))
+                    ->visible(fn (Get $get): bool => filled($get('name')) && $get('name') !== 'Покупное изделие')
                     ->columns(3),
 
                 Forms\Components\Section::make('Складской остаток')
                     ->schema([
                         Forms\Components\TextInput::make('quantity')
-                            ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Площадь плиты, м² (остаток)' : 'Текущий остаток на складе, м')
+                            ->label(fn (Get $get): string => match ($get('name')) {
+                                'Плита' => 'Площадь плиты, м² (остаток)',
+                                'Покупное изделие' => 'Количество на складе (шт.)',
+                                default => 'Текущий остаток на складе, м'
+                            })
                             ->numeric()
                             ->default(0)
                             ->required()
-                            ->disabled($isNotAdmin)
-                            ->helperText(fn (Get $get): ?string => $get('name') === 'Плита' ? 'Высчитывается автоматически в м²' : null),
+                            ->disabled($isNotAdmin),
 
                         Forms\Components\Hidden::make('unit')
                             ->default(fn (Get $get) => match ($get('name')) {
                                 'Плита' => 'м²',
-                                'Пруток', 'Труба' => 'м',
+                                'Покупное изделие' => 'шт',
                                 default => 'м'
                             })
                             ->key(fn (Get $get) => 'hidden_unit_' . ($get('name') ?? 'default')),
                     ])->columns(1),
             ]);
     }
-
     public static function table(Table $table): Table
     {
         return $table
@@ -111,7 +114,7 @@ class MaterialResource extends Resource
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('grade')
-                    ->label('Марка стали')
+                    ->label('Марка / Наименование')
                     ->searchable()
                     ->badge()
                     ->color('gray'),
@@ -127,20 +130,36 @@ class MaterialResource extends Resource
                     ->placeholder('-'),
 
                 Tables\Columns\TextColumn::make('quantity')
-                    ->label('Остаток')
+                    ->label('Всего на складе')
                     ->sortable()
                     ->weight('bold')
-                    ->color(fn (Material $record): string => $record->quantity <= 0 ? 'danger' : 'success')
-                    // БЕЗОПАСНЫЙ СУФФИКС: Больше никогда не вызовет ошибку match case
-                    ->suffix(function (Material $record): string {
-                        if ($record->name === 'Плита') {
-                            return ' м²';
-                        }
-                        if (in_array($record->name, ['Пруток', 'Труба'])) {
-                            return ' м';
-                        }
-                        return ' ' . ($record->unit ?? 'м');
+                    ->color(fn (Material $record): string => $record->quantity <= 0 ? 'danger' : 'gray')
+                    ->suffix(fn (Material $record): string => match ($record->name) {
+                        'Плита' => ' м²',
+                        'Покупное изделие' => ' шт.',
+                        default => ' м'
                     }),
+
+                Tables\Columns\TextColumn::make('reserved')
+                    ->label('В резерве')
+                    ->sortable()
+                    ->color(fn (Material $record): string => $record->reserved > 0 ? 'warning' : 'gray')
+                    ->suffix(fn (Material $record): string => match ($record->name) {
+                        'Плита' => ' м²',
+                        'Покупное изделие' => ' шт.',
+                        default => ' м'
+                    }),
+
+                Tables\Columns\TextColumn::make('available_quantity')
+                    ->label('Доступно')
+                    ->weight('bold')
+                    ->color(fn (Material $record): string => ($record->quantity - $record->reserved) <= 0 ? 'danger' : 'success')
+                    ->suffix(fn (Material $record): string => match ($record->name) {
+                        'Плита' => ' м²',
+                        'Покупное изделие' => ' шт.',
+                        default => ' м'
+                    })
+                    ->state(fn (Material $record): float => max(0, $record->quantity - $record->reserved)),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('name')
@@ -149,6 +168,7 @@ class MaterialResource extends Resource
                         'Пруток' => 'Пруток',
                         'Труба' => 'Труба',
                         'Плита' => 'Плита',
+                        'Покупное изделие' => 'Покупное изделие',
                     ]),
             ])
             ->actions([
@@ -160,7 +180,7 @@ class MaterialResource extends Resource
                     Tables\Actions\DeleteBulkAction::make(),
                 ]),
             ]);
-}
+    }
 
     public static function getPages(): array
     {

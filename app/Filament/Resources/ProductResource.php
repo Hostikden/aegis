@@ -50,41 +50,32 @@ class ProductResource extends Resource
                             ->required()
                             ->live(),
                 ])->columns(3),
-                // Секция 2: Умный калькулятор заготовок (BOM) — только для простых деталей
-                Forms\Components\Section::make('Нормы расхода сырья (BOM)')
+                // Секция 2: Умный калькулятор заготовок (BOM)
+                Forms\Components\Section::make('Нормы расхода сырья и комплектации (BOM)')
                     ->description('Выберите параметры материала и укажите габариты заготовки для авторасчета')
                     ->visible(fn (Get $get) => $get('type') === 'detail')
                     ->schema([
                         Forms\Components\Repeater::make('productMaterials')
                             ->relationship('productMaterials')
-
-                            // Безопасное удаление интерфейсных полей перед SQL-запросом INSERT/UPDATE
-                            ->mutateRelationshipDataBeforeCreateUsing(function (array $data): array {
-                                unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width']);
-                                return $data;
-                            })
-                            ->mutateRelationshipDataBeforeSaveUsing(function (array $data): array {
-                                unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width']);
-                                return $data;
-                            })
                             ->schema([
-
                                 Forms\Components\Select::make('material_type')
-                                    ->label('Тип проката')
+                                    ->label('Тип проката / Покупное')
                                     ->options([
                                         'Пруток' => '🔩 Пруток',
                                         'Труба' => '🧪 Труба',
                                         'Плита' => '⬜ Плита / Лист',
+                                        'Покупное изделие' => '📦 Покупное изделие',
                                     ])
                                     ->required()
                                     ->live()
                                     ->afterStateUpdated(function (Set $set) {
                                         $set('material_grade', null);
                                         $set('material_id', null);
+                                        $set('consumption_rate', 0);
                                     }),
 
                                 Forms\Components\Select::make('material_grade')
-                                    ->label('Марка стали / Сплав')
+                                    ->label('Марка стали / Наименование')
                                     ->options(function (Get $get) {
                                         $type = $get('material_type');
                                         if (!$type) return [];
@@ -122,7 +113,6 @@ class ProductResource extends Resource
                                     ->live()
                                     ->disabled(fn (Get $get) => !$get('material_grade')),
 
-                                // Поля чистых габаритов заготовки (Без лишних коэффициентов припуска)
                                 Forms\Components\Grid::make(2)
                                     ->schema([
                                         Forms\Components\TextInput::make('detail_length')
@@ -132,7 +122,6 @@ class ProductResource extends Resource
                                             ->required()
                                             ->live(onBlur: true)
                                             ->placeholder('150')
-                                            ->visible(fn (Get $get) => filled($get('material_id')))
                                             ->afterStateUpdated(fn (Get $get, Set $set) => self::calculateBomRate($get, $set)),
 
                                         Forms\Components\TextInput::make('detail_width')
@@ -142,35 +131,34 @@ class ProductResource extends Resource
                                             ->required()
                                             ->live(onBlur: true)
                                             ->placeholder('200')
-                                            ->visible(fn (Get $get) => $get('material_type') === 'Плита' && filled($get('material_id')))
+                                            ->visible(fn (Get $get) => $get('material_type') === 'Плита')
                                             ->afterStateUpdated(fn (Get $get, Set $set) => self::calculateBomRate($get, $set)),
-                                    ]),
+                                    ])
+                                    ->visible(fn (Get $get) => filled($get('material_id')) && $get('material_type') !== 'Покупное изделие'),
 
-                                // Итоговый расход для БД
                                 Forms\Components\TextInput::make('consumption_rate')
-                                    ->label(fn (Get $get) => $get('material_type') === 'Плита' ? 'Итого расход (м²)' : 'Итого расход (пог. м)')
+                                    ->label(fn (Get $get) => match ($get('material_type')) {
+                                        'Плита' => 'Итого расход (м²)',
+                                        'Покупное изделие' => 'Количество на 1 деталь (шт.)',
+                                        default => 'Итого расход (пог. м)'
+                                    })
                                     ->numeric()
                                     ->required()
-                                    ->disabled()
+                                    ->disabled(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
                                     ->dehydrated()
                                     ->prefix('📊')
                                     ->visible(fn (Get $get) => filled($get('material_id'))),
                             ])
                             ->columns(3)
                             ->defaultItems(0)
-                            ->addActionLabel('Добавить материал в спецификацию')
+                            ->addActionLabel('Добавить позицию в спецификацию')
                 ]),
-
-
-
-
-
-                // Секция 3: Состав сборки — Изолированный репитер (Решает проблему с ошибкой SKU)
+                // Секция 3: Состав сборки — только для сборочных единиц
                 Forms\Components\Section::make('Состав сборочной единицы')
-                    ->description('Укажите, из каких существующих деталей состоит данная сборка')
+                    ->description('Укажите, из каких вложенных деталей состоит данная сборка')
                     ->visible(fn (Get $get) => $get('type') === 'assembly')
                     ->schema([
-                        Forms\Components\Repeater::make('assembly_components') // Чисто интерфейсное имя
+                        Forms\Components\Repeater::make('assembly_components')
                             ->schema([
                                 Forms\Components\Select::make('component_product_id')
                                     ->label('Входящая деталь / узел')
@@ -196,70 +184,92 @@ class ProductResource extends Resource
                             ->addActionLabel('Добавить деталь в состав сборки'),
                     ]),
 
+                // Секция 4: НАСТРОЙКА ТЕХПРОЦЕССА
+                Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
+                    ->description('Составьте пошаговый маршрут обработки детали и укажите нормы времени')
+                    ->visible(fn (Get $get) => $get('type') === 'detail')
+                    ->schema([
+                        Forms\Components\Repeater::make('operations')
+                            ->relationship('operations')
+                            ->schema([
+                                Forms\Components\TextInput::make('operation_number')
+                                    ->label('№ Опер.')
+                                    ->numeric()
+                                    ->required()
+                                    ->disabled()
+                                    ->dehydrated()
+                                    ->default(function (Get $get) {
+                                        $items = $get('../operations') ?? [];
+                                        return (count($items) + 1) * 10;
+                                    }),
+
+                                Forms\Components\Select::make('operation_name')
+                                    ->label('Название операции')
+                                    ->options([
+                                        'Заготовительная' => '🪓 Заготовительная',
+                                        'Токарная' => '🌀 Токарная',
+                                        'Фрезерная' => '🪵 Фрезерная',
+                                        'Электроэрозия' => '⚡ Электроэрозия',
+                                        'Слесарная' => '🪛 Слесарная',
+                                        'Сварочная' => '👨‍🏭 Сварочная',
+                                        'Подряд' => '🚚 Подряд (Сторонние работы)',
+                                        'ОТК' => '🔍 Контроль (ОТК)',
+                                    ])
+                                    ->required()
+                                    ->searchable()
+                                    ->preload(),
+
+                                Forms\Components\TextInput::make('description')
+                                    ->label('Технологическое описание / Переходы')
+                                    ->placeholder('Точить в размер чертежа, снять фаски')
+                                    ->maxLength(500),
+
+                                Forms\Components\Grid::make(3)
+                                    ->schema([
+                                        Forms\Components\TextInput::make('piece_time')
+                                            ->label('Штучное время Тшт (мин)')
+                                            ->numeric()
+                                            ->default(0.00)
+                                            ->minValue(0)
+                                            ->prefix('⏱️'),
+
+                                        Forms\Components\TextInput::make('prep_time')
+                                            ->label('Подг.-закл. время Тпз (мин)')
+                                            ->numeric()
+                                            ->default(0.00)
+                                            ->minValue(0)
+                                            ->prefix('⚙️'),
+
+                                        Forms\Components\TextInput::make('comment')
+                                            ->label('Примечание / Особые отметки')
+                                            ->placeholder('Внимание на чистоту поверхности')
+                                            ->maxLength(255)
+                                            ->prefix('💬'),
+                                    ]),
+                            ])
+                            ->columns(3)
+                            ->defaultItems(0)
+                            ->addActionLabel('Добавить операцию в маршрут')
+                            ->reorderable(true)
+                            ->live(onBlur: true)
+                            ->afterStateUpdated(function (Set $set, $state) {
+                                if (!is_array($state)) return;
+                                $index = 1;
+                                foreach ($state as $key => $value) {
+                                    $set("operations.{$key}.operation_number", $index * 10);
+                                    $index++;
+                                }
+                            }),
+                    ]),
             ]);
     }
-
-    // Секция 4: Технологический маршрут детали (Шаблоны операций)
-Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
-    ->description('Составьте пошаговый маршрут обработки детали на производстве')
-    ->visible(fn (Forms\Get $get) => $get('type') === 'detail')
-    ->schema([
-        Forms\Components\Repeater::make('operations')
-            ->relationship('operations') // Наша новая связь из модели Product
-            ->schema([
-
-                // АВТОМАТИЧЕСКИЙ РАСЧЕТ ШАГА 10
-                Forms\Components\TextInput::make('operation_number')
-                    ->label('№ Опер.')
-                    ->numeric()
-                    ->required()
-                    // Автоматически рассчитывает следующий шаг (10, 20, 30...) на основе количества элементов в репитере
-                    ->default(function (Forms\Get $get) {
-                        $items = $get('../operations') ?? [];
-                        return (count($items) + 1) * 10;
-                    }),
-
-                // НАШ ВЫПАДАЮЩИЙ СПИСОК ОПЕРАЦИЙ
-                Forms\Components\Select::make('operation_name')
-                    ->label('Название операции')
-                    ->options([
-                        'Заготовительная' => '🪓 Заготовительная',
-                        'Токарная' => '🌀 Токарная',
-                        'Фрезерная' => '🪵 Фрезерная',
-                        'Электроэрозия' => '⚡ Электроэрозия',
-                        'Слесарная' => '🪛 Слесарная',
-                        'Сварочная' => '👨‍🏭 Сварочная',
-                        'Подряд' => '🚚 Подряд (Сторонние работы)',
-                        'ОТК' => '🔍 Контроль (ОТК)',
-                    ])
-                    ->required()
-                    ->searchable()
-                    ->preload(),
-
-                // Описание перехода для рабочего
-                Forms\Components\TextInput::make('description')
-                    ->label('Технологическое описание / Переходы')
-                    ->placeholder('Деталь Б-12, точить в размер чертежа, снять фаски 1х45°')
-                    ->maxLength(500),
-            ])
-            ->columns(3)
-            ->defaultItems(0)
-            ->addActionLabel('Добавить технологическую операцию')
-            ->reorderable(true) // Позволяет технологу перетаскивать операции мышкой (вверх/вниз)
-    ]),
-
-
-    /**
-     * Статический калькулятор перевода заготовок из мм в метры/м²
-     */
     public static function calculateBomRate(Get $get, Set $set): void
     {
         $type = $get('material_type');
         $length = floatval($get('detail_length'));
         $width = floatval($get('detail_width'));
 
-        if (!$type || $length <= 0) {
-            $set('consumption_rate', 0);
+        if (!$type || $length <= 0 || $type === 'Покупное изделие') {
             return;
         }
 
@@ -307,7 +317,6 @@ Forms\Components\Section::make('Технологический маршрут (�
                             $count = $record->components()->count();
                             return "Деталей: {$count} шт.";
                         }
-
                         $count = $record->productMaterials()->count();
                         return "Материалов: {$count} наим.";
                     }),
@@ -337,60 +346,4 @@ Forms\Components\Section::make('Технологический маршрут (�
     {
         return auth()->user()->hasAnyRole(['admin', 'director', 'technologist']);
     }
-
-
-
-
-
-    // Секция 4: Технологический маршрут детали (Шаблоны операций)
-Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
-    ->description('Составьте пошаговый маршрут обработки детали на производстве')
-    ->visible(fn (Forms\Get $get) => $get('type') === 'detail')
-    ->schema([
-        Forms\Components\Repeater::make('operations')
-            ->relationship('operations') // Наша новая связь из модели Product
-            ->schema([
-
-                // АВТОМАТИЧЕСКИЙ РАСЧЕТ ШАГА 10
-                Forms\Components\TextInput::make('operation_number')
-                    ->label('№ Опер.')
-                    ->numeric()
-                    ->required()
-                    // Автоматически рассчитывает следующий шаг (10, 20, 30...) на основе количества элементов в репитере
-                    ->default(function (Forms\Get $get) {
-                        $items = $get('../operations') ?? [];
-                        return (count($items) + 1) * 10;
-                    }),
-
-                // НАШ ВЫПАДАЮЩИЙ СПИСОК ОПЕРАЦИЙ
-                Forms\Components\Select::make('operation_name')
-                    ->label('Название операции')
-                    ->options([
-                        'Заготовительная' => '🪓 Заготовительная',
-                        'Токарная' => '🌀 Токарная',
-                        'Фрезерная' => '🪵 Фрезерная',
-                        'Электроэрозия' => '⚡ Электроэрозия',
-                        'Слесарная' => '🪛 Слесарная',
-                        'Сварочная' => '👨‍🏭 Сварочная',
-                        'Подряд' => '🚚 Подряд (Сторонние работы)',
-                        'ОТК' => '🔍 Контроль (ОТК)',
-                    ])
-                    ->required()
-                    ->searchable()
-                    ->preload(),
-
-                // Описание перехода для рабочего
-                Forms\Components\TextInput::make('description')
-                    ->label('Технологическое описание / Переходы')
-                    ->placeholder('Деталь Б-12, точить в размер чертежа, снять фаски 1х45°')
-                    ->maxLength(500),
-            ])
-            ->columns(3)
-            ->defaultItems(0)
-            ->addActionLabel('Добавить технологическую операцию')
-            ->reorderable(true) // Позволяет технологу перетаскивать операции мышкой (вверх/вниз)
-    ]),
-
-
-} // Конец класса ProductResource
-
+}

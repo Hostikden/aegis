@@ -7,7 +7,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProductOperation extends Model
 {
-    protected $fillable = ['product_id', 'operation_number', 'operation_name', 'description'];
+    // Разрешаем запись новых технологических полей времени
+    protected $fillable = [
+        'product_id',
+        'operation_number',
+        'operation_name',
+        'piece_time',
+        'prep_time',
+        'description',
+        'comment'
+    ];
 
     public function product(): BelongsTo
     {

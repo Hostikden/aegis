@@ -24,4 +24,25 @@ class ProductionTask extends Model
     {
         return $this->belongsTo(Order::class);
     }
+
+        protected static function booted(): void
+    {
+        static::updated(function (ProductionTask $task) {
+            // Если статус операции изменился на "completed" (Выполнен)
+            if ($task->isDirty('status') && $task->status === 'completed') {
+
+                // Проверяем, является ли эта операция Заготовительной
+                // Ищем вхождение слова "Заготовительная" в названии операции
+                if (str_contains($task->operation_name, '[Заготовительная]')) {
+                    $order = $task->order;
+
+                    if ($order) {
+                        // Запускаем снятие с резерва и физическое уменьшение остатка метров/штук
+                        app(\App\Services\ProductionService::class)->debitMaterialsFromReserve($order);
+                    }
+                }
+            }
+        });
+    }
+
 }
