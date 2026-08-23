@@ -98,41 +98,38 @@ public static function form(Form $form): Form
                 ->visible(fn (Get $get): bool => filled($get('name')))
                 ->columns(3),
 
-            Forms\Components\Section::make('Складской остаток')
-                ->schema([
-                    Forms\Components\TextInput::make('quantity')
-                        ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Площадь плиты (остаток)' : 'Текущий остаток на складе')
-                        ->numeric()
-                        ->default(0)
-                        ->required()
-                        ->suffix(fn (Get $get): string => match ($get('name')) {
-                            'Пруток', 'Труба' => ' м',
-                            'Плита' => ' м²',
-                            default => ''
-                        })
-                        ->helperText(fn (Get $get): ?string => $get('name') === 'Плита' ? 'Высчитывается автоматически в м²' : null),
+Forms\Components\Section::make('Складской остаток')
+    ->schema([
+        Forms\Components\TextInput::make('quantity')
+            ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Площадь плиты (остаток)' : 'Текущий остаток на складе')
+            ->numeric()
+            ->default(0)
+            ->required()
+            // Динамический суффикс: м² для плиты, м для прутка и трубы
+            ->suffix(fn (Get $get): string => match ($get('name')) {
+                'Плита' => ' м²',
+                'Пруток', 'Труба' => ' м',
+                default => ''
+            }),
 
-                    Forms\Components\Select::make('unit')
-                        ->label('Ед. изм.')
-                        ->options(function (Get $get) {
-                            if (in_array($get('name'), ['Пруток', 'Труба'])) {
-                                        return ['м' => 'Метры (м)'];
-                            }
-                            if ($get('name') === 'Плита') {
-                                return ['м²' => 'Квадратные метры (м²)'];
-                            }
-                            return ['м' => 'м'];
-                        })
-                        ->default(fn (Get $get) => match ($get('name')) {
-                            'Пруток', 'Труба' => 'м',
-                            'Плита' => 'м²',
-                            default => 'м'
-                        })
-                        ->required()
-                        ->disabled()   // Блокирует ручное изменение единиц измерения пользователем
-                        ->dehydrated() // Принудительно отправляет значение в БД при сохранении disabled-поля
-                        ->live(),      // Позволяет динамически обновлять суффикс у количества
-                ])->columns(2),
+        Forms\Components\Select::make('unit')
+            ->label('Ед. изм.')
+            ->options([
+                'м' => 'Метры (м)',
+                'м²' => 'Квадратные метры (м²)',
+            ])
+            ->default(fn (Get $get) => match ($get('name')) {
+                'Плита' => 'м²',
+                'Пруток', 'Труба' => 'м',
+                default => 'м'
+            })
+            // Заставляем систему обновлять значение при смене наименования (типа) материала
+            ->key(fn (Get $get) => 'unit_field_' . $get('name'))
+            ->required()
+            ->disabled()   // Блокируем от случайного ручного изменения пользователем
+            ->dehydrated() // Принудительно сохраняем правильную единицу (м или м²) в базу данных
+    ])->columns(2),
+
         ]);
 }
 
@@ -168,11 +165,13 @@ public static function form(Form $form): Form
                     ->suffix(' м')
                     ->placeholder('-'),
                 Tables\Columns\TextColumn::make('quantity')
-                    ->label('Остаток')
-                    ->sortable()
-                    ->weight('bold')
-                    ->color(fn (Material $record): string => $record->quantity <= 0 ? 'danger' : 'success')
-                    ->suffix(fn (Material $record): string => " {$record->unit}"),
+    ->label('Остаток')
+    ->sortable()
+    ->weight('bold')
+    ->color(fn (Material $record): string => $record->quantity <= 0 ? 'danger' : 'success')
+    // Автоматически добавляет пробел и "м" или "м²" в зависимости от того, что сохранено в строке
+    ->suffix(fn (Material $record): string => " {$record->unit}"),
+
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('name')

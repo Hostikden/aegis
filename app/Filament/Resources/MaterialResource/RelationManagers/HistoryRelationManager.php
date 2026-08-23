@@ -30,13 +30,14 @@ class HistoryRelationManager extends RelationManager
                     ->required()
                     ->live(),
 
-                Forms\Components\TextInput::make('quantity')
-                    ->label('Количество')
-                    ->numeric()
-                    ->minValue(0.0001)
-                    ->required()
-                    // Подхватываем метры родительского материала
-                    ->suffix(fn () => $this->getOwnerRecord()->unit),
+Forms\Components\TextInput::make('quantity')
+    ->label('Количество')
+    ->numeric()
+    ->minValue(0.0001)
+    ->required()
+    // Подхватывает 'м' или 'м²' напрямую из открытого материала
+    ->suffix(fn () => " " . $this->getOwnerRecord()->unit),
+
 
                 Forms\Components\TextInput::make('description')
                     ->label('Комментарий / Основание')
