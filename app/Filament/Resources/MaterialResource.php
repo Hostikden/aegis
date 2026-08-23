@@ -161,16 +161,18 @@ return $form
 
             // МЫ ПОЛНОСТЬЮ УБРАЛИ КОЛОНКУ ДЛИНЫ ХЛЫСТА ОТСЮДА
 
-            Tables\Columns\TextColumn::make('quantity')
-                ->label('Остаток')
-                ->sortable()
-                ->weight('bold')
-                ->color(fn (Material $record): string => $record->quantity <= 0 ? 'danger' : 'success')
-                ->suffix(fn (Material $record): string => match ($record->name) {
-                    'Плита' => ' м²',
-                    'Пруток', 'Труба' => ' м',
-                    default => " {$record->unit}"
-                }),
+            Forms\Components\TextInput::make('quantity')
+    ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Площадь плиты, м² (остаток)' : 'Текущий остаток на складе, м')
+    ->numeric()
+    ->default(0)
+    ->required()
+    ->suffix(fn (Get $get): string => match ($get('name')) {
+        'Плита' => ' м²',
+        'Пруток', 'Труба' => ' м',
+        default => '' // <-- Безопасный возврат пустой строки для любых других значений
+    })
+    ->helperText(fn (Get $get): ?string => $get('name') === 'Плита' ? 'Высчитывается автоматически в м²' : null),
+
         ])
         ->filters([
             Tables\Filters\SelectFilter::make('name')

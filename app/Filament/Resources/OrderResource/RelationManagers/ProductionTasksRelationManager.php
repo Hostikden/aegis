@@ -18,10 +18,16 @@ class ProductionTasksRelationManager extends RelationManager
     {
         return $form
             ->schema([
-                Forms\Components\TextInput::make('name')
+                Forms\Components\TextInput::make('operation_name')
                     ->label('Название технологического этапа')
                     ->required()
                     ->maxLength(255),
+
+                Forms\Components\TextInput::make('quantity_to_do')
+                    ->label('Количество к выполнению (шт)')
+                    ->integer()
+                    ->required()
+                    ->default(1),
 
                 Forms\Components\Select::make('status')
                     ->label('Текущий статус этапа')
@@ -38,15 +44,19 @@ class ProductionTasksRelationManager extends RelationManager
     public function table(Table $table): Table
     {
         return $table
-            ->recordTitleAttribute('name')
+            ->recordTitleAttribute('operation_name')
             ->columns([
-                Tables\Columns\TextColumn::make('name')
+                Tables\Columns\TextColumn::make('operation_name')
                     ->label('Технологическая операция / Задача')
                     ->weight('medium')
                     ->searchable(),
 
+                Tables\Columns\TextColumn::make('quantity_to_do')
+                    ->label('План (шт)')
+                    ->alignCenter(),
+
                 Tables\Columns\SelectColumn::make('status')
-                    ->label('Статус')
+                    ->label('Статус операции')
                     ->options([
                         'pending' => '⏳ В очереди',
                         'in_progress' => '⚙️ В работе',
@@ -61,7 +71,6 @@ class ProductionTasksRelationManager extends RelationManager
             ])
             ->filters([])
             ->headerActions([
-                // Позволяет вручную добавить специфичный этап для сложного изделия
                 Tables\Actions\CreateAction::make()
                     ->label('Добавить нестандартный этап'),
             ])
