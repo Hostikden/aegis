@@ -2,58 +2,37 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Order extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'order_number',
-        'product_id',
-        'total_quantity',
         'status',
-        'deadline'
+        'deadline',
+        'product_id',     // Переведено в nullable для поддержки многопозиционности
+        'total_quantity', // Переведено в nullable для поддержки многопозиционности
     ];
 
-    // Приведение типов: deadline теперь всегда объект даты Carbon
+    /**
+     * Даты, которые Eloquent должен автоматически преобразовывать в объекты Carbon
+     */
     protected $casts = [
         'deadline' => 'date',
     ];
 
-
-        /**
-     * Связь: Позиции (изделия) внутри данного комплексного заказа
-     */
-    public function orderItems(): \Illuminate\Database\Eloquent\Relations\HasMany
-    {
-        return $this->hasMany(OrderItem::class, 'order_id');
-    }
-
-
     /**
-     * Связь: Какое изделие производится в заказе
-     */
-    public function product(): BelongsTo
-    {
-        return $this->belongsTo(Product::class);
-    }
-
-    /**
-     * Связь: Задачи по технологическим этапам для этого заказа
-     */
-    public function productionTasks(): HasMany
-    {
-        return $this->hasMany(ProductionTask::class);
-    }
-
-        /**
-     * Хуки жизненного цикла модели заказа
+     * Хуки жизненного цикла модели заказа (Автовозврат материалов на склад при удалении)
      */
     protected static function booted(): void
     {
         static::deleting(function (Order $order) {
-            // Если заказ удаляется в статусе "В очереди" или "В работе" (когда резерв еще держится)
+            // Если заказ удаляется в статусе "В очереди" или "В производстве"
             if (in_array($order->status, ['pending', 'in_progress'])) {
                 // Вызываем метод сервиса для безопасного уменьшения колонки reserved на складе
                 if (class_exists(\App\Services\ProductionService::class)) {
@@ -62,5 +41,27 @@ class Order extends Model
             }
         });
     }
+    /**
+     * Связь: Позиции (изделия и количества) внутри данного комплексного заказа
+     */
+    public function orderItems(): HasMany
+    {
+        return $this->hasMany(OrderItem::class, 'order_id');
+    }
 
-}
+    /**
+     * Связь: Технологические задачи / этапы выполнения в цеху по этому заказу
+     */
+    public function productionTasks(): HasMany
+    {
+        return $this->hasMany(ProductionTask::class, 'order_id');
+    }
+
+    /**
+     * Старая связь: Оставлена для обратной совместимости системных вызовов
+     */
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class, 'product_id');
+    }
+} // Конец класса Order
