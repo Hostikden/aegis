@@ -21,6 +21,16 @@ class Order extends Model
         'deadline' => 'date',
     ];
 
+
+        /**
+     * Связь: Позиции (изделия) внутри данного комплексного заказа
+     */
+    public function orderItems(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(OrderItem::class, 'order_id');
+    }
+
+
     /**
      * Связь: Какое изделие производится в заказе
      */

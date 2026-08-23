@@ -2,76 +2,77 @@
 
 namespace App\Services;
 
+use App\Models\Order;
 use App\Models\Product;
 use App\Models\Material;
 use App\Models\MaterialHistory;
-use App\Models\Order;
 use Illuminate\Support\Facades\DB;
 
 class ProductionService
 {
     /**
-     * Рекурсивный расчет потребности в сырье для изделия (детали или сборки)
+     * ШАГ 1: Постановка в резерв при создании заказа (Учитывает многопозиционность)
      */
-    public function calculateRequiredMaterials(Product $product, float $quantity): array
+    public function reserveMaterialsForOrder(Order $order): void
     {
-        $materialsNeed = [];
+        $allRequirements = [];
 
-        if ($product->type === 'detail') {
-            foreach ($product->productMaterials as $pm) {
-                $totalNeed = $pm->consumption_rate * $quantity;
-                $materialsNeed[$pm->material_id] = ($materialsNeed[$pm->material_id] ?? 0) + $totalNeed;
-            }
-        } elseif ($product->type === 'assembly') {
-            foreach ($product->components as $component) {
-                $componentQuantity = $component->pivot->quantity * $quantity;
-                $subMaterials = $this->calculateRequiredMaterials($component, $componentQuantity);
-                foreach ($subMaterials as $materialId => $neededVolume) {
-                    $materialsNeed[$materialId] = ($materialsNeed[$materialId] ?? 0) + $neededVolume;
+        // Собираем общую потребность в материалах по всем позициям заказа циклом
+        foreach ($order->orderItems as $item) {
+            if ($item->product) {
+                $itemRequirements = $this->calculateRequiredMaterials($item->product, $item->quantity);
+                foreach ($itemRequirements as $materialId => $volume) {
+                    if (!isset($allRequirements[$materialId])) {
+                        $allRequirements[$materialId] = 0;
+                    }
+                    $allRequirements[$materialId] += $volume;
                 }
             }
         }
 
-        return $materialsNeed;
-    }
-
-    /**
-     * ШАГ 1: Поставить материалы в резерв (Вызывается при создании заказа)
-     */
-    public function reserveMaterialsForOrder(Order $order): void
-    {
-        $requirements = $this->calculateRequiredMaterials($order->product, $order->total_quantity);
-
-        DB::transaction(function () use ($requirements) {
-            foreach ($requirements as $materialId => $volume) {
-                $material = Material::findOrFail($materialId);
-                $material->increment('reserved', $volume);
+        // Замораживаем собранные объёмы на складе в рамках одной транзакции
+        DB::transaction(function () use ($allRequirements) {
+            foreach ($allRequirements as $materialId => $volume) {
+                $material = Material::find($materialId);
+                if ($material) {
+                    $material->increment('reserved', $volume);
+                }
             }
         });
     }
 
-
-
-
-
-       /**
-     * ШАГ 2: Умное точечное списание из резерва (Вызывается для конкретной детали)
+    /**
+     * ШАГ 2: Умное точечное списание из резерва под конкретную выполняемую деталь
      */
     public function debitMaterialsFromReserve(Order $order, Product $specificProduct): void
     {
-        // 1. Рассчитываем потребность в металле СТРОГО для этой одной конкретной детали
-        // Нам нужно учесть, сколько этой детали требуется на 1 сборку и умножить на объем заказа
-        $quantityForThisProduct = $order->total_quantity;
-
-        // Если эта деталь входит в состав сборки, ищем её коэффициент (количество на 1 узел)
-        if ($order->product->type === 'assembly') {
-            $component = $order->product->components()->where('child_id', $specificProduct->id)->first();
-            if ($component && $component->pivot) {
-                $quantityForThisProduct = $component->pivot->quantity * $order->total_quantity;
+        // По умолчанию берем объем из позиций заказа, если это простая деталь верхнего уровня
+        $quantityForThisProduct = 0;
+        foreach ($order->orderItems as $item) {
+            if ($item->product_id === $specificProduct->id) {
+                $quantityForThisProduct = $item->quantity;
+                break;
             }
         }
 
-        // Считаем чистые нормы расхода именно для этой детали
+        // Если эта деталь не найдена на верхнем уровне, ищем её внутри сборочных узлов заказа
+        if ($quantityForThisProduct === 0) {
+            foreach ($order->orderItems as $item) {
+                if ($item->product && $item->product->type === 'assembly') {
+                    $component = $item->product->components()->where('child_id', $specificProduct->id)->first();
+                    if ($component && $component->pivot) {
+                        $quantityForThisProduct = $component->pivot->quantity * $item->quantity;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ($quantityForThisProduct === 0) {
+            return; // Защита: деталь не принадлежит спецификациям этого заказа
+        }
+
+        // Считаем чистые нормы расхода именно для этой одной детали
         $requirements = $this->calculateRequiredMaterials($specificProduct, $quantityForThisProduct);
 
         DB::transaction(function () use ($requirements, $order, $specificProduct) {
@@ -80,18 +81,14 @@ class ProductionService
 
                 if (!$material) continue;
 
-                // Защита: Проверяем, не списали ли мы этот материал ранее
-                // (если резерв уже равен 0, значит списание по этой детали уже прошло)
-                if ($material->reserved <= 0) {
-                    continue;
-                }
+                if ($material->reserved <= 0) continue;
 
                 // Уменьшаем физический остаток на складе
                 $material->decrement('quantity', $volumeToDebit);
                 // Снимаем бронь строго в рамках зарезервированного объема
                 $material->decrement('reserved', min($material->reserved, $volumeToDebit));
 
-                // Фиксируем точечную операцию расхода в истории
+                // Фиксируем операцию расхода в истории склада
                 MaterialHistory::create([
                     'material_id' => $material->id,
                     'type' => 'deduction',
@@ -101,22 +98,29 @@ class ProductionService
             }
         });
     }
-
-
-      /**
-     * ШАГ 3: Аннулирование резерва (Вызывается при отмене ИЛИ удалении заказа)
+    /**
+     * ШАГ 3: Аннулирование резерва при удалении/отмене (Учитывает многопозиционность)
      */
     public function cancelReservationForOrder(Order $order): void
     {
-        // Рекурсивно собираем всю потребность в металле и штуках для этого изделия
-        $requirements = $this->calculateRequiredMaterials($order->product, $order->total_quantity);
+        $allRequirements = [];
 
-        DB::transaction(function () use ($requirements) {
-            foreach ($requirements as $materialId => $volume) {
+        foreach ($order->orderItems as $item) {
+            if ($item->product) {
+                $itemRequirements = $this->calculateRequiredMaterials($item->product, $item->quantity);
+                foreach ($itemRequirements as $materialId => $volume) {
+                    if (!isset($allRequirements[$materialId])) {
+                        $allRequirements[$materialId] = 0;
+                    }
+                    $allRequirements[$materialId] += $volume;
+                }
+            }
+        }
+
+        DB::transaction(function () use ($allRequirements) {
+            foreach ($allRequirements as $materialId => $volume) {
                 $material = Material::find($materialId);
-
                 if ($material) {
-                    // Уменьшаем резерв, но следим, чтобы он не ушел в минус ниже нуля (защита базы)
                     $newReserved = max(0, $material->reserved - $volume);
                     $material->update(['reserved' => $newReserved]);
                 }
@@ -124,35 +128,40 @@ class ProductionService
         });
     }
 
-
-
     /**
-     * ШАГ 4: Умное до-резервирование (Вызывается кнопкой из заказа при изменении BOM технологом)
+     * ШАГ 4: Умное до-резервирование (Вызывается кнопкой синхронизации из многокомпонентного заказа)
      */
     public function syncAndFixOrderReservations(Order $order): array
     {
-        // Рассчитываем чистую актуальную потребность в металле на текущую секунду
-        $currentRequirements = $this->calculateRequiredMaterials($order->product, $order->total_quantity);
+        $allRequirements = [];
+
+        foreach ($order->orderItems as $item) {
+            if ($item->product) {
+                $itemRequirements = $this->calculateRequiredMaterials($item->product, $item->quantity);
+                foreach ($itemRequirements as $materialId => $volume) {
+                    if (!isset($allRequirements[$materialId])) {
+                        $allRequirements[$materialId] = 0;
+                    }
+                    $allRequirements[$materialId] += $volume;
+                }
+            }
+        }
 
         $addedCount = 0;
         $warnings = [];
 
-        DB::transaction(function () use ($currentRequirements, &$addedCount, &$warnings) {
-            foreach ($currentRequirements as $materialId => $requiredVolume) {
+        DB::transaction(function () use ($allRequirements, &$addedCount, &$warnings) {
+            foreach ($allRequirements as $materialId => $requiredVolume) {
                 $material = Material::find($materialId);
 
-                if (!$material) {
-                    continue;
-                }
+                if (!$material) continue;
 
-                // Проверяем, хватает ли свободного металла на складе для обеспечения новой брони
                 $available = $material->quantity - $material->reserved;
 
                 if ($available < $requiredVolume) {
                     $warnings[] = "🚨 На складе дефицит! Для \"{$material->grade}\" требуется забронировать {$requiredVolume}, но свободно всего {$available}. Пополните склад.";
                 }
 
-                // Накатываем честный актуальный резерв
                 $material->increment('reserved', $requiredVolume);
                 $addedCount++;
             }
@@ -163,46 +172,136 @@ class ProductionService
             'warnings' => $warnings
         ];
     }
+    /**
+     * ГЛАВНЫЙ КАЛЬКУЛЯТОР: Рекурсивный сбор чистой потребности в металле и комплектующих
+     */
+    public function calculateRequiredMaterials(Product $product, int $totalQuantity): array
+    {
+        $requirements = [];
 
+        if ($product->type === 'detail') {
+            // Для простой детали собираем её нормы расхода
+            foreach ($product->productMaterials as $pm) {
+                if ($pm->material_id) {
+                    if (!isset($requirements[$pm->material_id])) {
+                        $requirements[$pm->material_id] = 0;
+                    }
+                    $requirements[$pm->material_id] += floatval($pm->consumption_rate) * $totalQuantity;
+                }
+            }
+        } elseif ($product->type === 'assembly') {
+            // Для сборки рекурсивно ныряем во все входящие компоненты спецификации
+            foreach ($product->components as $component) {
+                $componentQuantity = $component->pivot->quantity * $totalQuantity;
+                $componentRequirements = $this->calculateRequiredMaterials($component, $componentQuantity);
 
+                foreach ($componentRequirements as $materialId => $volume) {
+                    if (!isset($requirements[$materialId])) {
+                        $requirements[$materialId] = 0;
+                    }
+                    $requirements[$materialId] += $volume;
+                }
+            }
+        }
 
+        return $requirements;
+    }
 
-        /**
-     * Рассчитать общее время изготовления изделия (в минутах) с учетом Тшт и Тпз
+    /**
+     * РЕКУРСИВНАЯ ВАЛИДАЦИЯ: Проверка наличия заполненного BOM у детали или внутри узлов сборки
+     */
+    public function hasMaterialsInBom(Product $product): bool
+    {
+        if ($product->type === 'detail') {
+            return $product->productMaterials()->count() > 0;
+        }
+
+        if ($product->type === 'assembly') {
+            if ($product->components()->count() === 0) {
+                return false;
+            }
+
+            foreach ($product->components as $component) {
+                if ($this->hasMaterialsInBom($component)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+    /**
+     * Расчет общего времени изготовления изделия (в минутах)
      */
     public function calculateProductionTimeInMinutes(Product $product, int $orderQuantity): float
     {
         $totalMinutes = 0;
 
         if ($product->type === 'detail') {
-            // Если это деталь, берем время из её техпроцесса
             foreach ($product->operations as $operation) {
                 $pieceTime = floatval($operation->piece_time ?? 0);
                 $prepTime = floatval($operation->prep_time ?? 0);
-
-                // Формула: Тпз + (Тшт * Кол-во деталей)
                 $totalMinutes += $prepTime + ($pieceTime * $orderQuantity);
             }
         } elseif ($product->type === 'assembly') {
-            // Если это сборка, рекурсивно считаем время изготовления всех деталей
             foreach ($product->components as $component) {
-                // Кол-во детали в 1 сборке * Общий объем заказа на сборку
                 $totalComponentQuantity = $component->pivot->quantity * $orderQuantity;
-
                 $totalMinutes += $this->calculateProductionTimeInMinutes($component, $totalComponentQuantity);
             }
-
-            // Добавляем 60 минут на финальную сборку самого узла в цеху
-            $totalMinutes += 60;
+            // Настраиваемое время на финальную сборку самого узла (0 минут)
+            $totalMinutes += 0;
         }
 
         return $totalMinutes;
     }
 
     /**
-     * Отформатировать минуты в красивую строку (дни, часы, минуты)
+     * Расчет оставшегося времени работы по многокомпонентному заказу (в минутах)
      */
-       /**
+    public function calculateRemainingProductionTimeInMinutes(Order $order): float
+    {
+        if (in_array($order->status, ['completed', 'cancelled'])) {
+            return 0;
+        }
+
+        $remainingMinutes = 0;
+        $activeTasks = $order->productionTasks()->where('status', '!=', 'completed')->get();
+
+        foreach ($activeTasks as $task) {
+            foreach ($order->orderItems as $item) {
+                $product = $item->product;
+                if (!$product) continue;
+
+                if ($product->type === 'detail' && str_contains($task->operation_name, "({$product->sku})")) {
+                    foreach ($product->operations as $operation) {
+                        if (stripos($task->operation_name, $operation->operation_name) !== false) {
+                            $remainingMinutes += floatval($operation->prep_time ?? 0) + (floatval($operation->piece_time ?? 0) * $item->quantity);
+                            break 2;
+                        }
+                    }
+                } elseif ($product->type === 'assembly') {
+                    foreach ($product->components as $component) {
+                        if (str_contains($task->operation_name, "({$component->sku})")) {
+                            foreach ($component->operations as $operation) {
+                                if (stripos($task->operation_name, $operation->operation_name) !== false) {
+                                    $totalQty = $component->pivot->quantity * $item->quantity;
+                                    $remainingMinutes += floatval($operation->prep_time ?? 0) + (floatval($operation->piece_time ?? 0) * $totalQty);
+                                    break 3;
+                                }
+                            }
+                        }
+                    }
+                    if (stripos($task->operation_name, 'Финальная сборка узла') !== false && str_contains($task->operation_name, "{$product->name}")) {
+                        $remainingMinutes += 0;
+                    }
+                }
+            }
+        }
+
+        return $remainingMinutes;
+    }
+
+    /**
      * Отформатировать минуты в красивую строку на основе 8-часового рабочего дня (смены)
      */
     public function formatMinutesToHumanTime(float $minutes): string
@@ -215,12 +314,8 @@ class ProductionService
 
         // 1 рабочий день (смена) = 8 часов * 60 минут = 480 минут
         $workDays = floor($minutes / 480);
-
-        // Остаток минут после вычета полных рабочих дней переводим в часы
         $remainingMinutesAfterDays = $minutes % 480;
         $hours = floor($remainingMinutesAfterDays / 60);
-
-        // Остаток чистых минут
         $remainingMinutes = $remainingMinutesAfterDays % 60;
 
         $result = [];
@@ -236,115 +331,4 @@ class ProductionService
 
         return implode(' ', $result);
     }
-
-
-
-
-
-
-
-
-
-        /**
-     * Рекурсивная проверка: есть ли вообще материалы (BOM) у детали или внутри компонентов сборки
-     */
-    public function hasMaterialsInBom(Product $product): bool
-    {
-        if ($product->type === 'detail') {
-            // Для простой детали проверяем её прямую спецификацию
-            return $product->productMaterials()->count() > 0;
-        }
-
-        if ($product->type === 'assembly') {
-            // Для сборки проверяем, есть ли материалы хотя бы у одной из входящих деталей
-            if ($product->components()->count() === 0) {
-                return false;
-            }
-
-            foreach ($product->components as $component) {
-                if ($this->hasMaterialsInBom($component)) {
-                    return true; // Нашли металл во вложенной детали — сборка валидна!
-                }
-            }
-        }
-
-        return false;
-    }
-
-
-
-
-
-
-
-        /**
-     * Рассчитать оставшееся время работы по заказу (в минутах) на основе только незакрытых операций
-     */
-    public function calculateRemainingProductionTimeInMinutes(Order $order): float
-    {
-        // Если заказ уже полностью выполнен или отменен — остаток времени равен нулю
-        if (in_array($order->status, ['completed', 'cancelled'])) {
-            return 0;
-        }
-
-        $remainingMinutes = 0;
-        $product = $order->product;
-
-        if (!$product) {
-            return 0;
-        }
-
-        // Вытаскиваем из базы данных все технологические задачи этого заказа, которые еще НЕ выполнены
-        $activeTasks = $order->productionTasks()->where('status', '!=', 'completed')->get();
-
-        if ($product->type === 'detail') {
-            // Для простой детали сопоставляем активные задачи с нормами времени из техпроцесса
-            foreach ($activeTasks as $task) {
-                foreach ($product->operations as $operation) {
-                    // Ищем связь по названию операции (например, "Токарная")
-                    if (stripos($task->operation_name, "[{$operation->operation_name}]") !== false ||
-                        stripos($task->operation_name, $operation->operation_name) !== false) {
-
-                        $pieceTime = floatval($operation->piece_time ?? 0);
-                        $prepTime = floatval($operation->prep_time ?? 0);
-
-                        // Прибавляем время невыполненного этапа: Тпз + (Тшт * Объем заказа)
-                        $remainingMinutes += $prepTime + ($pieceTime * $order->total_quantity);
-                        break;
-                    }
-                }
-            }
-        } elseif ($product->type === 'assembly') {
-            // Для сборки проходим по всем незакрытым задачам (включая вложенные детали)
-            foreach ($activeTasks as $task) {
-                // Ищем, к какому компоненту сборки относится эта незакрытая задача
-                foreach ($product->components as $component) {
-                    if (str_contains($task->operation_name, "({$component->sku})") ||
-                        str_contains($task->operation_name, "{$component->sku}")) {
-
-                        // Ищем норму времени операции внутри этой вложенной детали
-                        foreach ($component->operations as $operation) {
-                            if (stripos($task->operation_name, "[{$operation->operation_name}]") !== false ||
-                                stripos($task->operation_name, $operation->operation_name) !== false) {
-
-                                $totalComponentQuantity = $component->pivot->quantity * $order->total_quantity;
-                                $remainingMinutes += floatval($operation->prep_time ?? 0) + (floatval($operation->piece_time ?? 0) * $totalComponentQuantity);
-                                break 2; // Переходим к следующей задаче
-                            }
-                        }
-                    }
-                }
-
-                // Если это незакрытый этап финальной сборки самого узла, добавляем оставшиеся 60 минут
-                if (stripos($task->operation_name, 'Финальная сборка узла') !== false) {
-                    $remainingMinutes += 60;
-                }
-            }
-        }
-
-        return $remainingMinutes;
-    }
-
-
-
-}
+} // Конец класса ProductionService

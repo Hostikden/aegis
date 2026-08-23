@@ -26,29 +26,12 @@ class OrderResource extends Resource
     {
         return $form
             ->schema([
-                Forms\Components\Section::make('Информация о заказе')
+                Forms\Components\Section::make('Шапка заказа')
                     ->schema([
                         Forms\Components\TextInput::make('order_number')
                             ->label('Номер заказа')
                             ->placeholder('ЗП-2026-001')
                             ->unique(ignoreRecord: true)
-                            ->required(),
-
-                        Forms\Components\Select::make('product_id')
-                            ->label('Изделие для производства')
-                            ->options(fn () => Product::all()->mapWithKeys(function ($prod) {
-                                $typeLabel = $prod->type === 'assembly' ? '📦 Сборка' : '🔩 Деталь';
-                                return [$prod->id => "{$prod->sku} — {$prod->name} ({$typeLabel})"];
-                            }))
-                            ->searchable()
-                            ->preload()
-                            ->required(),
-
-                        Forms\Components\TextInput::make('total_quantity')
-                            ->label('Количество к производству (шт)')
-                            ->integer()
-                            ->minValue(1)
-                            ->default(1)
                             ->required(),
 
                         Forms\Components\Select::make('status')
@@ -67,7 +50,36 @@ class OrderResource extends Resource
                             ->native(false)
                             ->displayFormat('d.m.Y')
                             ->required(),
-                    ])->columns(2),
+                    ])->columns(3),
+
+                Forms\Components\Section::make('Состав заказа (Позиции)')
+                    ->description('Добавьте одно или несколько изделий, которые необходимо изготовить в рамках этого заказа')
+                    ->schema([
+                        // ДИНАМИЧЕСКАЯ ТАБЛИЦА: Позволяет добавлять неограниченное число изделий в один заказ
+                        Forms\Components\Repeater::make('orderItems')
+                            ->relationship('orderItems')
+                            ->schema([
+                                Forms\Components\Select::make('product_id')
+                                    ->label('Изделие')
+                                    ->options(fn () => Product::all()->mapWithKeys(function ($prod) {
+                                        $typeLabel = $prod->type === 'assembly' ? '📦 Сборка' : '🔩 Деталь';
+                                        return [$prod->id => "{$prod->sku} — {$prod->name} ({$typeLabel})"];
+                                    }))
+                                    ->searchable()
+                                    ->preload()
+                                    ->required(),
+
+                                Forms\Components\TextInput::make('quantity')
+                                    ->label('Количество (шт)')
+                                    ->integer()
+                                    ->minValue(1)
+                                    ->default(1)
+                                    ->required(),
+                            ])
+                            ->columns(2)
+                            ->defaultItems(1)
+                            ->addActionLabel('Добавить изделие в заказ'),
+                    ]),
             ]);
     }
     public static function table(Table $table): Table
@@ -80,15 +92,19 @@ class OrderResource extends Resource
                     ->sortable()
                     ->fontFamily('mono'),
 
-                Tables\Columns\TextColumn::make('product.name')
-                    ->label('Изделие')
+                // ИСПРАВЛЕНО: Выводим все заказанные изделия компактным списком через запятую
+                Tables\Columns\TextColumn::make('orderItems.product.name')
+                    ->label('Состав заказа (Изделия)')
                     ->searchable()
-                    ->description(fn (Order $record): string => "Артикул: " . ($record->product->sku ?? '-')),
+                    ->badge()
+                    ->color('gray')
+                    ->separator(', '),
 
-                Tables\Columns\TextColumn::make('total_quantity')
-                    ->label('Кол-во (шт)')
+                // Выводим общее суммарное количество всех штук в заказе
+                Tables\Columns\TextColumn::make('orderItems')
+                    ->label('Всего (шт)')
                     ->alignCenter()
-                    ->sortable(),
+                    ->state(fn (Order $record): int => $record->orderItems()->sum('quantity')),
 
                 Tables\Columns\TextColumn::make('status')
                     ->label('Статус')
@@ -116,22 +132,24 @@ class OrderResource extends Resource
                         if (!$record->deadline || $record->status === 'completed') return 'gray';
                         return $record->deadline->isPast() ? 'danger' : 'gray';
                     })
-                    // ДИНАМИЧЕСКИЙ ВЫВОД: Вывод даты фактического закрытия заказа
                     ->description(function (Order $record): string|\Illuminate\Contracts\Support\Htmlable {
                         if ($record->status === 'completed') {
                             $completedDate = $record->updated_at ? $record->updated_at->format('d.m.Y') : date('d.m.Y');
                             return "🛠️ Выполнено: {$completedDate}";
                         }
 
-                        if (!$record->product) {
-                            return 'Нет изделия';
-                        }
-
                         $service = app(\App\Services\ProductionService::class);
 
-                        $totalMinutes = $service->calculateProductionTimeInMinutes($record->product, $record->total_quantity);
+                        // Считаем общую трудоемкость по всем позициям этого многокомпонентного заказа
+                        $totalMinutes = 0;
+                        foreach ($record->orderItems as $item) {
+                            if ($item->product) {
+                                $totalMinutes += $service->calculateProductionTimeInMinutes($item->product, $item->quantity);
+                            }
+                        }
                         $humanTotalTime = $service->formatMinutesToHumanTime($totalMinutes);
 
+                        // Считаем динамический остаток незакрытых часов
                         $remainingMinutes = $service->calculateRemainingProductionTimeInMinutes($record);
                         $humanRemainingTime = $service->formatMinutesToHumanTime($remainingMinutes);
 
