@@ -69,12 +69,10 @@ class Dashboard extends BaseDashboard implements HasTable
             ->filters([
                 Tables\Filters\Filter::make('task_search_filter')
                     ->form([
-                        // ВИЗУАЛЬНЫЙ АНКОР: Обернули фильтры в стильную карточку общего стиля
                         Section::make('Панель быстрого поиска по цеху')
-                            ->description('Введите данные для мгновенной фильтрации технологических задач и чертежей')
-                            ->aside() // Сдвигает заголовок влево, освобождая место под поля ввода
+                            ->description('Заполните любое поле для мгновенной фильтрации технологических задач и чертежей')
                             ->schema([
-                                Grid::make(2) // Сетка в два столбца для идеального выравнивания
+                                Grid::make(4) // 4 поля ввода встанут строго в один горизонтальный ряд
                                     ->schema([
                                         TextInput::make('order_number')
                                             ->label('Номер заказа')
@@ -89,12 +87,12 @@ class Dashboard extends BaseDashboard implements HasTable
 
                                         TextInput::make('product_name')
                                             ->label('Название готового изделия')
-                                            ->placeholder('Кронштейн опорный / Вал')
+                                            ->placeholder('Кронштейн / Вал')
                                             ->prefixIcon('heroicon-m-cube'),
 
                                         TextInput::make('operation_keyword')
-                                            ->label('Название детали / Ключевое слово')
-                                            ->placeholder('Токарная / Корпус фильтра')
+                                            ->label('Название детали / Операция')
+                                            ->placeholder('Токарная / Корпус')
                                             ->prefixIcon('heroicon-m-cog-6-tooth'),
                                     ]),
                             ]),
@@ -119,6 +117,8 @@ class Dashboard extends BaseDashboard implements HasTable
                             );
                     })
             ], layout: Tables\Enums\FiltersLayout::AboveContent)
+            // ИСПРАВЛЕНО: Растягиваем контейнер фильтров на всю ширину (убираем сжатие в 1/3 часть слева)
+            ->filtersFormColumns(1)
             ->actions([
                 Tables\Actions\Action::make('dashboard_start')
                     ->label('В работу')
