@@ -205,4 +205,13 @@ class MaterialResource extends Resource
     {
         return auth()->user()->role === 'admin';
     }
+
+        public static function getRelations(): array
+    {
+        return [
+            // ВОЗВРАЩАЕМ ИСТОРИЮ: Подключаем отображение вкладки движений материала
+            \App\Filament\Resources\MaterialResource\RelationManagers\HistoryRelationManager::class,
+        ];
+    }
+
 }

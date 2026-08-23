@@ -1,9 +1,6 @@
 <?php
 
-
-
-namespace App\Filament\Resources\MaterialResource\RelationManagers; // <-- Проверьте эту строку
-
+namespace App\Filament\Resources\MaterialResource\RelationManagers;
 
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -13,9 +10,9 @@ use Filament\Tables\Table;
 
 class HistoryRelationManager extends RelationManager
 {
-    protected static string $relationship = 'history';
+    protected static string $relationship = 'histories';
 
-    protected static ?string $title = 'История движений (Приход / Расход)';
+    protected static ?string $title = 'История движения и складские операции';
 
     public function form(Form $form): Form
     {
@@ -24,88 +21,70 @@ class HistoryRelationManager extends RelationManager
                 Forms\Components\Select::make('type')
                     ->label('Тип операции')
                     ->options([
-                        'addition' => 'Приход (Добавление)',
-                        'deduction' => 'Расход (Списание)',
+                        'addition' => '📥 Приход (Пополнение склада)',
+                        'deduction' => '📤 Расход (Ручное списание)',
                     ])
+                    ->required(),
+
+                Forms\Components\TextInput::make('quantity')
+                    ->label('Количество')
+                    ->numeric()
+                    ->minValue(0.0001)
                     ->required()
-                    ->live(),
-
-Forms\Components\TextInput::make('quantity')
-    ->label('Количество')
-    ->numeric()
-    ->minValue(0.0001)
-    ->required()
-    // Подхватывает 'м' или 'м²' напрямую из открытого материала
-    ->suffix(fn () => " " . $this->getOwnerRecord()->unit),
-
+                    // Подхватывает м, м² или шт напрямую из карточки открытого материала
+                    ->suffix(fn () => " " . ($this->getOwnerRecord()->unit ?? 'м')),
 
                 Forms\Components\TextInput::make('description')
-                    ->label('Комментарий / Основание')
-                    ->placeholder('Заказ №..., Поступление от ТД Металл')
-                    ->maxLength(255),
+                    ->label('Основание / Комментарий')
+                    ->placeholder('Накладная №123 / Исправление пересортицы')
+                    ->maxLength(255)
+                    ->required(),
             ])->columns(1);
     }
 
     public function table(Table $table): Table
     {
         return $table
-            ->recordTitleAttribute('type')
+            ->recordTitleAttribute('description')
             ->columns([
                 Tables\Columns\TextColumn::make('created_at')
-                    ->label('Дата')
+                    ->label('Дата и время')
                     ->dateTime('d.m.Y H:i')
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('type')
                     ->label('Операция')
                     ->badge()
-                    ->color(fn (string $state): string => match ($state) {
-                        'addition' => 'success',
-                        'deduction' => 'danger',
-                    })
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'addition' => '➕ Приход',
-                        'deduction' => '➖ Расход',
-                    }),
+                    ->color(fn (string $state): string => $state === 'addition' ? 'success' : 'danger')
+                    ->formatStateUsing(fn (string $state) => $state === 'addition' ? '📥 Приход' : '📤 Расход'),
 
                 Tables\Columns\TextColumn::make('quantity')
-                    ->label('Количество')
+                    ->label('Объем')
                     ->weight('bold')
-                    ->suffix(fn () => " " . $this->getOwnerRecord()->unit),
+                    ->suffix(fn () => " " . ($this->getOwnerRecord()->unit ?? 'м')),
 
                 Tables\Columns\TextColumn::make('description')
-                    ->label('Комментарий')
-                    ->placeholder('—'),
+                    ->label('Основание / Комментарий')
+                    ->searchable(),
             ])
-            ->filters([])
             ->headerActions([
-                // Кнопка создания записи истории прямо из карточки материала
                 Tables\Actions\CreateAction::make()
-                    ->label('Добавить операцию')
-                    ->modalHeading('Регистрация движения материала')
-                    ->after(function ($record) {
-                        // АВТОМАТИЧЕСКИЙ ПЕРЕСЧЕТ ОСТАТКА НА СКЛАДЕ
-                        $material = $this->getOwnerRecord();
+                    ->label('Добавить складскую операцию')
+                    // МАГИЯ АВТОПЕРЕСЧЕТА: Выполняется в БД прямо в момент нажатия кнопки "Создать"
+                    ->after(function (\App\Models\MaterialHistory $record) {
+                        // Берем открытый в данный момент материал на складе
+                        $material = $record->material;
+                        $quantity = floatval($record->quantity);
 
                         if ($record->type === 'addition') {
-                            $material->increment('quantity', $record->quantity);
-                        } else {
-                            $material->decrement('quantity', $record->quantity);
-                        }
-                    }),
-            ])
-            ->actions([
-                Tables\Actions\DeleteAction::make()
-                    ->label('Удалить')
-                    // Если ошиблись и удалили запись из истории — остаток вернется назад
-                    ->after(function ($record) {
-                        $material = $this->getOwnerRecord();
-                        if ($record->type === 'addition') {
-                            $material->decrement('quantity', $record->quantity);
-                        } else {
-                            $material->increment('quantity', $record->quantity);
+                            // Если это приход — физически увеличиваем остаток на складе
+                            $material->increment('quantity', $quantity);
+                        } elseif ($record->type === 'deduction') {
+                            // Если это ручной расход — физически уменьшаем остаток на складе
+                            $material->decrement('quantity', $quantity);
                         }
                     }),
             ]);
+
     }
 }
