@@ -3,6 +3,7 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\OrderResource\Pages;
+use App\Filament\Resources\OrderResource\RelationManagers;
 use App\Models\Order;
 use App\Models\Product;
 use Filament\Forms;
@@ -10,61 +11,63 @@ use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Filament\Notifications\Notification;
 
 class OrderResource extends Resource
 {
     protected static ?string $model = Order::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-clipboard-document-check';
-    protected static ?string $navigationLabel = 'Заказы в производство';
+    protected static ?string $navigationIcon = 'heroicon-o-clipboard-document-list';
+    protected static ?string $navigationLabel = 'Заказы на производство';
     protected static ?string $modelLabel = 'Заказ';
     protected static ?string $pluralModelLabel = 'Заказы';
-
     public static function form(Form $form): Form
     {
         return $form
             ->schema([
-                Forms\Components\Section::make('Параметры производственного заказа')
+                Forms\Components\Section::make('Информация о заказе')
                     ->schema([
                         Forms\Components\TextInput::make('order_number')
                             ->label('Номер заказа')
-                            ->placeholder('ЗНП-001')
-                            ->required()
-                            ->unique(ignoreRecord: true),
+                            ->placeholder('ЗП-2026-001')
+                            ->unique(ignoreRecord: true)
+                            ->required(),
 
                         Forms\Components\Select::make('product_id')
                             ->label('Изделие для производства')
-                            ->options(Product::pluck('name', 'id'))
+                            ->options(fn () => Product::all()->mapWithKeys(function ($prod) {
+                                $typeLabel = $prod->type === 'assembly' ? '📦 Сборка' : '🔩 Деталь';
+                                return [$prod->id => "{$prod->sku} — {$prod->name} ({$typeLabel})"];
+                            }))
                             ->searchable()
                             ->preload()
                             ->required(),
 
                         Forms\Components\TextInput::make('total_quantity')
-                            ->label('Количество (шт)')
-                            ->numeric()
+                            ->label('Количество к производству (шт)')
+                            ->integer()
                             ->minValue(1)
-                            ->required(),
-
-                        Forms\Components\DatePicker::make('deadline')
-                            ->label('Срок сдачи')
+                            ->default(1)
                             ->required(),
 
                         Forms\Components\Select::make('status')
-                            ->label('Статус')
+                            ->label('Статус заказа')
                             ->options([
-                                'pending' => 'Черновик / Ожидание',
-                                'in_progress' => 'В производстве',
-                                'completed' => 'Выполнен',
-                                'shipped' => 'Отгружен',
+                                'pending' => '⏳ В очереди',
+                                'in_progress' => '⚙️ В производстве',
+                                'completed' => '✅ Выполнен',
+                                'cancelled' => '❌ Отменен',
                             ])
                             ->default('pending')
-                            ->disabled() // Статус лучше менять через кнопки действий, а не вручную
                             ->required(),
-                    ])->columns(2)
+
+                        Forms\Components\DatePicker::make('deadline')
+                            ->label('Срок сдачи (Дедлайн)')
+                            ->native(false)
+                            ->displayFormat('d.m.Y')
+                            ->required(),
+                    ])->columns(2),
             ]);
     }
-
     public static function table(Table $table): Table
     {
         return $table
@@ -73,90 +76,68 @@ class OrderResource extends Resource
                     ->label('№ Заказа')
                     ->searchable()
                     ->sortable()
-                    ->weight('bold'),
+                    ->fontFamily('mono'),
 
                 Tables\Columns\TextColumn::make('product.name')
                     ->label('Изделие')
-                    ->searchable(),
+                    ->searchable()
+                    ->description(fn (Order $record): string => "Артикул: {$record->product->sku}"),
 
                 Tables\Columns\TextColumn::make('total_quantity')
                     ->label('Кол-во (шт)')
-                    ->alignCenter(),
+                    ->alignCenter()
+                    ->sortable(),
 
                 Tables\Columns\TextColumn::make('status')
                     ->label('Статус')
                     ->badge()
-                    ->colors([
-                        'gray' => 'pending',
-                        'warning' => 'in_progress',
-                        'success' => 'completed',
-                        'info' => 'shipped',
-                    ])
+                    ->color(fn (string $state): string => match ($state) {
+                        'pending' => 'gray',
+                        'in_progress' => 'warning',
+                        'completed' => 'success',
+                        'cancelled' => 'danger',
+                    })
                     ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'pending' => 'Ожидание',
+                        'pending' => 'В очереди',
                         'in_progress' => 'В работе',
-                        'completed' => 'Готов',
-                        'shipped' => 'Отгружен',
+                        'completed' => 'Выполнен',
+                        'cancelled' => 'Отменен',
                     }),
 
                 Tables\Columns\TextColumn::make('deadline')
                     ->label('Срок сдачи')
                     ->date('d.m.Y')
-                    ->sortable(),
+                    ->sortable()
+                    ->color(fn (Order $record): string =>
+                        $record->deadline->isPast() && $record->status !== 'completed' ? 'danger' : 'gray'
+                    ),
             ])
-            ->filters([])
+            ->filters([
+                Tables\Filters\SelectFilter::make('status')
+                    ->label('Статус')
+                    ->options([
+                        'pending' => 'В очереди',
+                        'in_progress' => 'В работе',
+                        'completed' => 'Выполнен',
+                    ]),
+            ])
             ->actions([
-                // Кнопка запуска в работу с проверкой и списанием металла
-                Tables\Actions\Action::make('start_production')
-                    ->label('Запустить в работу')
-                    ->icon('heroicon-o-play')
-                    ->color('success')
-                    ->visible(fn (Order $record) => $record->status === 'pending')
-                    ->requiresConfirmation()
-                    ->action(function (Order $record) {
-                        $product = $record->product;
-
-                        // 1. Проверяем наличие материалов по спецификации (BOM)
-                        foreach ($product->productMaterials as $pm) {
-                            $requiredAmount = $pm->consumption_rate * $record->total_quantity;
-                            $material = $pm->material;
-
-                            if ($material->quantity < $requiredAmount) {
-                                Notification::make()
-                                    ->title('Ошибка запуска')
-                                    ->body("Недостаточно металла на складе: {$material->name} ({$material->grade}). Требуется: {$requiredAmount} {$material->unit}, в наличии: {$material->quantity} {$material->unit}.")
-                                    ->danger()
-                                    ->send();
-                                return;
-                            }
-                        }
-
-                        // 2. Если металла хватает — списываем его со склада
-                        foreach ($product->productMaterials as $pm) {
-                            $requiredAmount = $pm->consumption_rate * $record->total_quantity;
-                            $pm->material->decrement('quantity', $requiredAmount);
-                        }
-
-                        // 3. Создаем базовые задачи для цеха (например, Резка и Сборка)
-                        $record->productionTasks()->createMany([
-                            ['operation_name' => 'Заготовка / Резка металла', 'quantity_to_do' => $record->total_quantity],
-                            ['operation_name' => 'Гибка / Слесарная обработка', 'quantity_to_do' => $record->total_quantity],
-                            ['operation_name' => 'Сварка / Сборка изделия', 'quantity_to_do' => $record->total_quantity],
-                        ]);
-
-                        // 4. Обновляем статус заказа
-                        $record->update(['status' => 'in_progress']);
-
-                        Notification::make()
-                            ->title('Заказ запущен')
-                            ->body('Металл успешно списан со склада, задачи для цехов сформированы.')
-                            ->success()
-                            ->send();
-                    }),
-
                 Tables\Actions\EditAction::make(),
+                Tables\Actions\DeleteAction::make(),
             ])
-            ->bulkActions([]);
+            ->bulkActions([
+                Tables\Actions\BulkActionGroup::make([
+                    Tables\Actions\DeleteBulkAction::make(),
+                ]),
+            ]);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            // Подключаем менеджер технологических этапов (задач) в карточку заказа
+            RelationManagers\ProductionTasksRelationManager::class,
+        ];
     }
 
     public static function getPages(): array
@@ -167,10 +148,4 @@ class OrderResource extends Resource
             'edit' => Pages\EditOrder::route('/{record}/edit'),
         ];
     }
-    public static function canViewAny(): bool
-{
-    // Разрешить просмотр только админам и менеджерам. Операторы (workers) не увидят этот раздел в меню.
-    return auth()->user()->hasAnyRole(['admin', 'manager']);
-}
-
 }
