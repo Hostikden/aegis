@@ -109,12 +109,28 @@ class OrderResource extends Resource
                     }),
 
                 Tables\Columns\TextColumn::make('deadline')
-                    ->label('Срок сдачи')
-                    ->date('d.m.Y')
-                    ->sortable()
-                    ->color(fn (Order $record): string =>
-                        $record->deadline && $record->deadline->isPast() && $record->status !== 'completed' ? 'danger' : 'gray'
-                    ),
+    ->label('Срок сдачи')
+    ->date('d.m.Y')
+    ->sortable()
+    // БЕЗОПАСНЫЙ ЦВЕТ: Заменяем match и сложные цепочки на простые проверки
+    ->color(function (Order $record): string {
+        if (!$record->deadline) {
+            return 'gray';
+        }
+
+        // Если заказ уже выполнен, дата всегда горит обычным серым цветом
+        if ($record->status === 'completed') {
+            return 'gray';
+        }
+
+        // Если дедлайн просрочен, подсвечиваем его красным (danger)
+        if ($record->deadline->isPast()) {
+            return 'danger';
+        }
+
+        return 'gray';
+    }),
+
             ])
             ->filters([
                 // ИСПРАВЛЕНО: Явно прописали опции для фильтра, убрав любые скрытые вызовы match фреймворка

@@ -44,17 +44,21 @@ class OperatorTasks extends BaseWidget
                     ->label('Сделано (шт)')
                     ->alignCenter(),
 
-                Tables\Columns\TextColumn::make('status')
-                    ->label('Статус')
-                    ->badge()
-                    ->colors([
-                        'danger' => 'waiting',
-                        'warning' => 'active',
-                    ])
-                    ->formatStateUsing(fn (string $state): string => match ($state) {
-                        'waiting' => 'В очереди',
-                        'active' => 'В работе',
-                    }),
+Tables\Columns\TextColumn::make('status')
+    ->label('Статус')
+    ->badge()
+    ->color(fn (string $state): string => match ($state) {
+        'pending' => 'gray',         // Добавили обработку статуса "В очереди"
+        'in_progress' => 'warning',  // Статус "В работе"
+        'completed' => 'success',    // Статус "Выполнен"
+        default => 'gray',           // Защита от падения (если статус неизвестен)
+    })
+    ->formatStateUsing(fn (string $state): string => match ($state) {
+        'pending' => '⏳ В очереди',
+        'in_progress' => '⚙️ В работе',
+        'completed' => '✅ Выполнен',
+        default => $state,           // Защита от падения! Выведет статус как есть
+    }),
 
                 Tables\Columns\TextColumn::make('operator.name')
                     ->label('Исполнитель')

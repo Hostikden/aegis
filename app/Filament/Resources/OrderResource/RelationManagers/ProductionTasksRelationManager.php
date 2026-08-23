@@ -55,14 +55,22 @@ class ProductionTasksRelationManager extends RelationManager
                     ->label('План (шт)')
                     ->alignCenter(),
 
-                Tables\Columns\SelectColumn::make('status')
-                    ->label('Статус операции')
-                    ->options([
-                        'pending' => '⏳ В очереди',
-                        'in_progress' => '⚙️ В работе',
-                        'completed' => '✅ Выполнен',
-                    ])
-                    ->selectablePlaceholder(false),
+                Tables\Columns\TextColumn::make('status')
+    ->label('Статус операции')
+    ->badge()
+    ->color(fn (string $state): string => match ($state) {
+        'pending' => 'gray',
+        'in_progress' => 'warning',
+        'completed' => 'success',
+        default => 'gray', // Защита от падения!
+    })
+    ->formatStateUsing(fn (string $state): string => match ($state) {
+        'pending' => '⏳ В очереди',
+        'in_progress' => '⚙️ В работе',
+        'completed' => '✅ Выполнен',
+        default => $state, // Защита от падения! ИСПРАВЛЕНО
+    }),
+
 
                 Tables\Columns\TextColumn::make('updated_at')
                     ->label('Обновлено')

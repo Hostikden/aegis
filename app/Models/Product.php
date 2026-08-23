@@ -50,4 +50,12 @@ public function components(): \Illuminate\Database\Eloquent\Relations\BelongsToM
         ->withPivot('quantity')
         ->withTimestamps();
     }
+
+    public function operations(): \Illuminate\Database\Eloquent\Relations\HasMany
+{
+    // Сортируем операции по номеру (10, 20, 30...), чтобы они всегда шли по порядку
+    return $this->hasMany(ProductOperation::class)->orderBy('operation_number');
+}
+
+
 }

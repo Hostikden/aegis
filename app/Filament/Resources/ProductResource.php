@@ -199,6 +199,56 @@ class ProductResource extends Resource
             ]);
     }
 
+    // Секция 4: Технологический маршрут детали (Шаблоны операций)
+Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
+    ->description('Составьте пошаговый маршрут обработки детали на производстве')
+    ->visible(fn (Forms\Get $get) => $get('type') === 'detail')
+    ->schema([
+        Forms\Components\Repeater::make('operations')
+            ->relationship('operations') // Наша новая связь из модели Product
+            ->schema([
+
+                // АВТОМАТИЧЕСКИЙ РАСЧЕТ ШАГА 10
+                Forms\Components\TextInput::make('operation_number')
+                    ->label('№ Опер.')
+                    ->numeric()
+                    ->required()
+                    // Автоматически рассчитывает следующий шаг (10, 20, 30...) на основе количества элементов в репитере
+                    ->default(function (Forms\Get $get) {
+                        $items = $get('../operations') ?? [];
+                        return (count($items) + 1) * 10;
+                    }),
+
+                // НАШ ВЫПАДАЮЩИЙ СПИСОК ОПЕРАЦИЙ
+                Forms\Components\Select::make('operation_name')
+                    ->label('Название операции')
+                    ->options([
+                        'Заготовительная' => '🪓 Заготовительная',
+                        'Токарная' => '🌀 Токарная',
+                        'Фрезерная' => '🪵 Фрезерная',
+                        'Электроэрозия' => '⚡ Электроэрозия',
+                        'Слесарная' => '🪛 Слесарная',
+                        'Сварочная' => '👨‍🏭 Сварочная',
+                        'Подряд' => '🚚 Подряд (Сторонние работы)',
+                        'ОТК' => '🔍 Контроль (ОТК)',
+                    ])
+                    ->required()
+                    ->searchable()
+                    ->preload(),
+
+                // Описание перехода для рабочего
+                Forms\Components\TextInput::make('description')
+                    ->label('Технологическое описание / Переходы')
+                    ->placeholder('Деталь Б-12, точить в размер чертежа, снять фаски 1х45°')
+                    ->maxLength(500),
+            ])
+            ->columns(3)
+            ->defaultItems(0)
+            ->addActionLabel('Добавить технологическую операцию')
+            ->reorderable(true) // Позволяет технологу перетаскивать операции мышкой (вверх/вниз)
+    ]),
+
+
     /**
      * Статический калькулятор перевода заготовок из мм в метры/м²
      */
@@ -287,5 +337,60 @@ class ProductResource extends Resource
     {
         return auth()->user()->hasAnyRole(['admin', 'director', 'technologist']);
     }
+
+
+
+
+
+    // Секция 4: Технологический маршрут детали (Шаблоны операций)
+Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
+    ->description('Составьте пошаговый маршрут обработки детали на производстве')
+    ->visible(fn (Forms\Get $get) => $get('type') === 'detail')
+    ->schema([
+        Forms\Components\Repeater::make('operations')
+            ->relationship('operations') // Наша новая связь из модели Product
+            ->schema([
+
+                // АВТОМАТИЧЕСКИЙ РАСЧЕТ ШАГА 10
+                Forms\Components\TextInput::make('operation_number')
+                    ->label('№ Опер.')
+                    ->numeric()
+                    ->required()
+                    // Автоматически рассчитывает следующий шаг (10, 20, 30...) на основе количества элементов в репитере
+                    ->default(function (Forms\Get $get) {
+                        $items = $get('../operations') ?? [];
+                        return (count($items) + 1) * 10;
+                    }),
+
+                // НАШ ВЫПАДАЮЩИЙ СПИСОК ОПЕРАЦИЙ
+                Forms\Components\Select::make('operation_name')
+                    ->label('Название операции')
+                    ->options([
+                        'Заготовительная' => '🪓 Заготовительная',
+                        'Токарная' => '🌀 Токарная',
+                        'Фрезерная' => '🪵 Фрезерная',
+                        'Электроэрозия' => '⚡ Электроэрозия',
+                        'Слесарная' => '🪛 Слесарная',
+                        'Сварочная' => '👨‍🏭 Сварочная',
+                        'Подряд' => '🚚 Подряд (Сторонние работы)',
+                        'ОТК' => '🔍 Контроль (ОТК)',
+                    ])
+                    ->required()
+                    ->searchable()
+                    ->preload(),
+
+                // Описание перехода для рабочего
+                Forms\Components\TextInput::make('description')
+                    ->label('Технологическое описание / Переходы')
+                    ->placeholder('Деталь Б-12, точить в размер чертежа, снять фаски 1х45°')
+                    ->maxLength(500),
+            ])
+            ->columns(3)
+            ->defaultItems(0)
+            ->addActionLabel('Добавить технологическую операцию')
+            ->reorderable(true) // Позволяет технологу перетаскивать операции мышкой (вверх/вниз)
+    ]),
+
+
 } // Конец класса ProductResource
 
