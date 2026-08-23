@@ -49,24 +49,23 @@ class ProductResource extends Resource
                             ->live(), // Перерисовывает форму при изменении типа
                     ])->columns(3),
 
- // Секция 2: Автоматический расчет спецификации металла (BOM) — только для простых деталей
-Forms\Components\Repeater::make('productMaterials')
-    ->relationship('productMaterials')
-
-    // МУТАТОР ДЛЯ СОЗДАНИЯ: Удаляет служебные поля калькулятора перед записью в БД
-    ->mutateRelationshipDataBeforeCreateUsing(function (array $data): array {
-        unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width'], $data['allowance_factor']);
-        return $data;
-    })
-
-    // МУТАТОР ДЛЯ РЕДАКТИРОВАНИЯ: Удаляет служебные поля калькулятора перед обновлением БД
-    ->mutateRelationshipDataBeforeSaveUsing(function (array $data): array {
-        unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width'], $data['allowance_factor']);
-        return $data;
-    })
+// Секция 2: Автоматический расчет спецификации металла (BOM) — только для простых деталей
+Forms\Components\Section::make('Нормы расхода сырья (BOM)')
+    ->description('Выберите параметры материала и укажите габариты детали для авторасчета расхода')
+    ->visible(fn (Forms\Get $get) => $get('type') === 'detail')
     ->schema([
         Forms\Components\Repeater::make('productMaterials')
+            // ИЗМЕНЕНО: Явно передаем строку 'productMaterials', чтобы Filament искал связь в модели Product
             ->relationship('productMaterials')
+
+            ->mutateRelationshipDataBeforeCreateUsing(function (array $data): array {
+                unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width'], $data['allowance_factor']);
+                return $data;
+            })
+            ->mutateRelationshipDataBeforeSaveUsing(function (array $data): array {
+                unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width'], $data['allowance_factor']);
+                return $data;
+            })
             ->schema([
 
                 // 1. Выбор типа проката
@@ -79,7 +78,6 @@ Forms\Components\Repeater::make('productMaterials')
                     ])
                     ->required()
                     ->live()
-                    ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
                     ->afterStateUpdated(function (Forms\Set $set) {
                         $set('material_grade', null);
                         $set('material_id', null);
@@ -100,11 +98,10 @@ Forms\Components\Repeater::make('productMaterials')
                     ->searchable()
                     ->required()
                     ->live()
-                    ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
                     ->disabled(fn (Forms\Get $get) => !$get('material_type'))
                     ->afterStateUpdated(fn (Forms\Set $set) => $set('material_id', null)),
 
-                // 3. Выбор конкретного профиля (Этот ID сохраняем, поэтому dehydrated НЕ НУЖЕН)
+                // 3. Выбор конкретного профиля
                 Forms\Components\Select::make('material_id')
                     ->label('Профиль / Сортамент со склада')
                     ->options(function (Forms\Get $get) {
@@ -129,50 +126,38 @@ Forms\Components\Repeater::make('productMaterials')
                     ->disabled(fn (Forms\Get $get) => !$get('material_grade')),
 
                 // Поля геометрии детали
-                Forms\Components\Grid::make(3)
-                    ->schema([
-                        Forms\Components\TextInput::make('detail_length')
-                            ->label('Длина детали (мм)')
-                            ->numeric()
-                            ->minValue(1)
-                            ->required()
-                            ->live(onBlur: true)
-                            ->placeholder('150')
-                            ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
-                            ->visible(fn (Forms\Get $get) => filled($get('material_id')))
-                            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
+             // Поля геометрии детали (Теперь сетка из 2 колонок, без коэффициента отходов)
+Forms\Components\Grid::make(2)
+    ->schema([
+        Forms\Components\TextInput::make('detail_length')
+            ->label('Длина заготовки (мм)')
+            ->numeric()
+            ->minValue(1)
+            ->required()
+            ->live(onBlur: true)
+            ->placeholder('150')
+            ->visible(fn (Forms\Get $get) => filled($get('material_id')))
+            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
 
-                        Forms\Components\TextInput::make('detail_width')
-                            ->label('Ширина детали (мм)')
-                            ->numeric()
-                            ->minValue(1)
-                            ->required()
-                            ->live(onBlur: true)
-                            ->placeholder('200')
-                            ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
-                            ->visible(fn (Forms\Get $get) => $get('material_type') === 'Плита' && filled($get('material_id')))
-                            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
+        Forms\Components\TextInput::make('detail_width')
+            ->label('Ширина заготовки (мм)')
+            ->numeric()
+            ->minValue(1)
+            ->required()
+            ->live(onBlur: true)
+            ->placeholder('200')
+            ->visible(fn (Forms\Get $get) => $get('material_type') === 'Плита' && filled($get('material_id')))
+            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
+    ]),
 
-                        Forms\Components\TextInput::make('allowance_factor')
-                            ->label('Коэф. припуска (отходов)')
-                            ->numeric()
-                            ->default(1.0)
-                            ->minValue(1.0)
-                            ->required()
-                            ->live(onBlur: true)
-                            ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
-                            ->helperText('1.0 — без отходов, 1.05 — плюс 5% на рез')
-                            ->visible(fn (Forms\Get $get) => filled($get('material_id')))
-                            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
-                    ]),
 
-                // Итоговый расход (Его мы СОХРАНЯЕМ, поэтому dehydrated(true))
+                // Итоговый расход
                 Forms\Components\TextInput::make('consumption_rate')
                     ->label(fn (Forms\Get $get) => $get('material_type') === 'Плита' ? 'Итого норма расхода (м²)' : 'Итого норма расхода (пог. м)')
                     ->numeric()
                     ->required()
                     ->disabled()
-                    ->dehydrated() // Принудительно сохраняем в базу данных рассчитанное значение
+                    ->dehydrated()
                     ->prefix('📊')
                     ->helperText('Высчитывается автоматически на основе геометрии детали')
                     ->visible(fn (Forms\Get $get) => filled($get('material_id'))),
@@ -181,6 +166,7 @@ Forms\Components\Repeater::make('productMaterials')
             ->defaultItems(0)
             ->addActionLabel('Добавить материал в спецификацию')
     ]),
+
 
 
 
@@ -223,12 +209,14 @@ Forms\Components\Repeater::make('productMaterials')
     /**
  * Функция автоматического пересчета норм расхода (BOM) на основе габаритов детали
  */
+/**
+ * Функция автоматического пересчета норм расхода (BOM) на основе чистых габаритов заготовки
+ */
 public static function calculateBomRate(Forms\Get $get, Forms\Set $set): void
 {
     $type = $get('material_type');
     $length = floatval($get('detail_length'));
     $width = floatval($get('detail_width'));
-    $allowance = floatval($get('allowance_factor') ?? 1.0);
 
     if (!$type || $length <= 0) {
         $set('consumption_rate', 0);
@@ -236,21 +224,20 @@ public static function calculateBomRate(Forms\Get $get, Forms\Set $set): void
     }
 
     if ($type === 'Плита') {
-        // Расчет для плит: (Длина (мм) * Ширина (мм) / 1 000 000) * Коэффициент отхода = Квадратные метры (м²)
+        // Расчет для плит: (Длина (мм) * Ширина (мм)) / 1 000 000 = Квадратные метры (м²)
         if ($width > 0) {
             $areaSquareMeters = ($length * $width) / 1000000;
-            $finalRate = $areaSquareMeters * $allowance;
-            $set('consumption_rate', round($finalRate, 5)); // Округляем до 5 знаков для точности
+            $set('consumption_rate', round($areaSquareMeters, 5)); // Точность до 5 знаков
         } else {
             $set('consumption_rate', 0);
         }
     } else {
-        // Расчет для Прутков и Труб: Длина детали (мм) / 1000 * Коэффициент отхода = Погонные метры (м)
+        // Расчет для Прутков и Труб: Длина заготовки (мм) / 1000 = Погонные метры (м)
         $linearMeters = $length / 1000;
-        $finalRate = $linearMeters * $allowance;
-        $set('consumption_rate', round($finalRate, 5));
+        $set('consumption_rate', round($linearMeters, 5));
     }
 }
+
 
 
 
