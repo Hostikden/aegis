@@ -274,4 +274,77 @@ class ProductionService
 
 
 
+
+
+
+        /**
+     * Рассчитать оставшееся время работы по заказу (в минутах) на основе только незакрытых операций
+     */
+    public function calculateRemainingProductionTimeInMinutes(Order $order): float
+    {
+        // Если заказ уже полностью выполнен или отменен — остаток времени равен нулю
+        if (in_array($order->status, ['completed', 'cancelled'])) {
+            return 0;
+        }
+
+        $remainingMinutes = 0;
+        $product = $order->product;
+
+        if (!$product) {
+            return 0;
+        }
+
+        // Вытаскиваем из базы данных все технологические задачи этого заказа, которые еще НЕ выполнены
+        $activeTasks = $order->productionTasks()->where('status', '!=', 'completed')->get();
+
+        if ($product->type === 'detail') {
+            // Для простой детали сопоставляем активные задачи с нормами времени из техпроцесса
+            foreach ($activeTasks as $task) {
+                foreach ($product->operations as $operation) {
+                    // Ищем связь по названию операции (например, "Токарная")
+                    if (stripos($task->operation_name, "[{$operation->operation_name}]") !== false ||
+                        stripos($task->operation_name, $operation->operation_name) !== false) {
+
+                        $pieceTime = floatval($operation->piece_time ?? 0);
+                        $prepTime = floatval($operation->prep_time ?? 0);
+
+                        // Прибавляем время невыполненного этапа: Тпз + (Тшт * Объем заказа)
+                        $remainingMinutes += $prepTime + ($pieceTime * $order->total_quantity);
+                        break;
+                    }
+                }
+            }
+        } elseif ($product->type === 'assembly') {
+            // Для сборки проходим по всем незакрытым задачам (включая вложенные детали)
+            foreach ($activeTasks as $task) {
+                // Ищем, к какому компоненту сборки относится эта незакрытая задача
+                foreach ($product->components as $component) {
+                    if (str_contains($task->operation_name, "({$component->sku})") ||
+                        str_contains($task->operation_name, "{$component->sku}")) {
+
+                        // Ищем норму времени операции внутри этой вложенной детали
+                        foreach ($component->operations as $operation) {
+                            if (stripos($task->operation_name, "[{$operation->operation_name}]") !== false ||
+                                stripos($task->operation_name, $operation->operation_name) !== false) {
+
+                                $totalComponentQuantity = $component->pivot->quantity * $order->total_quantity;
+                                $remainingMinutes += floatval($operation->prep_time ?? 0) + (floatval($operation->piece_time ?? 0) * $totalComponentQuantity);
+                                break 2; // Переходим к следующей задаче
+                            }
+                        }
+                    }
+                }
+
+                // Если это незакрытый этап финальной сборки самого узла, добавляем оставшиеся 60 минут
+                if (stripos($task->operation_name, 'Финальная сборка узла') !== false) {
+                    $remainingMinutes += 60;
+                }
+            }
+        }
+
+        return $remainingMinutes;
+    }
+
+
+
 }

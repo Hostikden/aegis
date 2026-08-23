@@ -107,7 +107,10 @@ class OrderResource extends Resource
                         default => $state,
                     }),
 
-                Tables\Columns\TextColumn::make('deadline')
+
+
+
+                                    Tables\Columns\TextColumn::make('deadline')
                     ->label('Срок сдачи / Время')
                     ->date('d.m.Y')
                     ->sortable()
@@ -115,8 +118,8 @@ class OrderResource extends Resource
                         if (!$record->deadline || $record->status === 'completed') return 'gray';
                         return $record->deadline->isPast() ? 'danger' : 'gray';
                     })
-                    // УМНЫЙ ВЫВОД ВРЕМЕНИ НА ИЗГОТОВЛЕНИЕ ИЗ ТЕХПРОЦЕССОВ
-                    ->description(function (Order $record): string {
+                    // ДИНАМИЧЕСКИЙ ВЫВОД: Общая трудоемкость изделия + Оставшееся время до закрытия заказа
+                    ->description(function (Order $record): string|\Illuminate\Contracts\Support\Htmlable {
                         if ($record->status === 'completed') {
                             return '🛠️ Выполнено';
                         }
@@ -125,11 +128,24 @@ class OrderResource extends Resource
                         }
 
                         $service = app(\App\Services\ProductionService::class);
-                        $totalMinutes = $service->calculateProductionTimeInMinutes($record->product, $record->total_quantity);
-                        $humanTime = $service->formatMinutesToHumanTime($totalMinutes);
 
-                        return "⏱️ План работ: {$humanTime}";
+                        // 1. Считаем общую неизменную трудоемкость по чертежу
+                        $totalMinutes = $service->calculateProductionTimeInMinutes($record->product, $record->total_quantity);
+                        $humanTotalTime = $service->formatMinutesToHumanTime($totalMinutes);
+
+                        // 2. Считаем динамический остаток по незакрытым операциям (наш новый функционал)
+                        $remainingMinutes = $service->calculateRemainingProductionTimeInMinutes($record);
+                        $humanRemainingTime = $service->formatMinutesToHumanTime($remainingMinutes);
+
+                        // Чтобы на экране строки выглядели структурированно, возвращаем HTML-блок
+                        return new \Illuminate\Support\HtmlString("
+                            <div class='text-xs space-y-0.5 text-gray-500'>
+                                <div>⏱️ Общий план: {$humanTotalTime}</div>
+                                <div class='text-amber-600 font-medium'>⏳ Осталось работ: {$humanRemainingTime}</div>
+                            </div>
+                        ");
                     }),
+
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
