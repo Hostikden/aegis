@@ -75,7 +75,7 @@ class ProductResource extends Resource
                                         $set('consumption_rate', 0);
                                     }),
 
-                                Forms\Components\Select::make('material_grade')
+                                        Forms\Components\Select::make('material_grade')
                                     ->label('Марка стали / Наименование')
                                     ->options(function (Get $get) {
                                         $type = $get('material_type');
@@ -89,21 +89,33 @@ class ProductResource extends Resource
                                     ->required()
                                     ->live()
                                     ->disabled(fn (Get $get) => !$get('material_type'))
-                                    // МАГИЯ АВТОПОДБОРА ID: Прячет лишнее поле сортамента для покупных изделий
+                                    // УМНЫЙ ХУК: Мгновенно заполняет скрытую ячейку нужным ID со склада
                                     ->afterStateUpdated(function (Get $get, Set $set, $state) {
-                                        if ($get('material_type') === 'Покупное изделие' && $state) {
-                                            $material = Material::where('name', 'Покупное изделие')
-                                                ->where('grade', $state)
-                                                ->first();
-                                            if ($material) {
-                                                $set('material_id', $material->id);
+                                        if ($get('material_type') === 'Покупное изделие') {
+                                            if ($state) {
+                                                $material = Material::where('name', 'Покупное изделие')
+                                                    ->where('grade', $state)
+                                                    ->first();
+
+                                                if ($material) {
+                                                    // Записываем ID в скрытое поле
+                                                    $set('material_id', $material->id);
+                                                } else {
+                                                    $set('material_id', null);
+                                                }
+                                            } else {
+                                                $set('material_id', null);
                                             }
                                         } else {
+                                            // Если переключили обратно на металл, сбрасываем сортамент для ручного выбора
                                             $set('material_id', null);
                                         }
                                     }),
 
-                                Forms\Components\Select::make('material_id')
+                                      // ИСПРАВЛЕНО: Сортамент со склада для проката (виден только для металла)
+
+
+                                      Forms\Components\Select::make('material_id')
                                     ->label('Профиль / Сортамент со склада')
                                     ->options(function (Get $get) {
                                         $type = $get('material_type');
@@ -122,13 +134,21 @@ class ProductResource extends Resource
                                     })
                                     ->searchable()
                                     ->preload()
-                                    // ИСПРАВЛЕНО: Скрыто и необязательно для покупных изделий
-                                    ->required(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
+                                    ->required() // Поле остается обязательным для проката!
                                     ->visible(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
                                     ->live()
                                     ->disabled(fn (Get $get) => !$get('material_grade')),
 
-                                Forms\Components\Grid::make(2)
+                                // МАГИЯ СКРЫТОГО ПОЛЯ: Автоматически хранит ID для покупных изделий, технолог его не видит
+                                Forms\Components\Hidden::make('material_id')
+                                    ->dehydrated() // Принудительно отправляет значение в базу данных при сохранении
+                                    ->required()   // MySQL полностью доволен, так как поле никогда не будет null
+                                    ->visible(fn (Get $get) => $get('material_type') === 'Покупное изделие'),
+
+
+
+
+                                    Forms\Components\Grid::make(2)
                                     ->schema([
                                         Forms\Components\TextInput::make('detail_length')
                                             ->label('Длина заготовки (мм)')
