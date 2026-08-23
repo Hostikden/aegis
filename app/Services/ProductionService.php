@@ -50,32 +50,58 @@ class ProductionService
         });
     }
 
-    /**
-     * ШАГ 2: Списание из резерва (Вызывается при закрытии Заготовительной операции)
-     */
-    public function debitMaterialsFromReserve(Order $order): void
-    {
-        $requirements = $this->calculateRequiredMaterials($order->product, $order->total_quantity);
 
-        DB::transaction(function () use ($requirements, $order) {
+
+
+
+       /**
+     * ШАГ 2: Умное точечное списание из резерва (Вызывается для конкретной детали)
+     */
+    public function debitMaterialsFromReserve(Order $order, Product $specificProduct): void
+    {
+        // 1. Рассчитываем потребность в металле СТРОГО для этой одной конкретной детали
+        // Нам нужно учесть, сколько этой детали требуется на 1 сборку и умножить на объем заказа
+        $quantityForThisProduct = $order->total_quantity;
+
+        // Если эта деталь входит в состав сборки, ищем её коэффициент (количество на 1 узел)
+        if ($order->product->type === 'assembly') {
+            $component = $order->product->components()->where('child_id', $specificProduct->id)->first();
+            if ($component && $component->pivot) {
+                $quantityForThisProduct = $component->pivot->quantity * $order->total_quantity;
+            }
+        }
+
+        // Считаем чистые нормы расхода именно для этой детали
+        $requirements = $this->calculateRequiredMaterials($specificProduct, $quantityForThisProduct);
+
+        DB::transaction(function () use ($requirements, $order, $specificProduct) {
             foreach ($requirements as $materialId => $volumeToDebit) {
-                $material = Material::findOrFail($materialId);
+                $material = Material::find($materialId);
+
+                if (!$material) continue;
+
+                // Защита: Проверяем, не списали ли мы этот материал ранее
+                // (если резерв уже равен 0, значит списание по этой детали уже прошло)
+                if ($material->reserved <= 0) {
+                    continue;
+                }
 
                 // Уменьшаем физический остаток на складе
                 $material->decrement('quantity', $volumeToDebit);
-                // Снимаем бронь (резерв)
+                // Снимаем бронь строго в рамках зарезервированного объема
                 $material->decrement('reserved', min($material->reserved, $volumeToDebit));
 
-                // Фиксируем операцию расхода в истории
+                // Фиксируем точечную операцию расхода в истории
                 MaterialHistory::create([
                     'material_id' => $material->id,
                     'type' => 'deduction',
                     'quantity' => $volumeToDebit,
-                    'description' => "Автосписание проката по заготовительной операции заказа №{$order->order_number}",
+                    'description' => "Автосписание под деталь \"{$specificProduct->name}\" (чертёж {$specificProduct->sku}) по заказу №{$order->order_number}",
                 ]);
             }
         });
     }
+
 
       /**
      * ШАГ 3: Аннулирование резерва (Вызывается при отмене ИЛИ удалении заказа)
@@ -210,6 +236,42 @@ class ProductionService
 
         return implode(' ', $result);
     }
+
+
+
+
+
+
+
+
+
+        /**
+     * Рекурсивная проверка: есть ли вообще материалы (BOM) у детали или внутри компонентов сборки
+     */
+    public function hasMaterialsInBom(Product $product): bool
+    {
+        if ($product->type === 'detail') {
+            // Для простой детали проверяем её прямую спецификацию
+            return $product->productMaterials()->count() > 0;
+        }
+
+        if ($product->type === 'assembly') {
+            // Для сборки проверяем, есть ли материалы хотя бы у одной из входящих деталей
+            if ($product->components()->count() === 0) {
+                return false;
+            }
+
+            foreach ($product->components as $component) {
+                if ($this->hasMaterialsInBom($component)) {
+                    return true; // Нашли металл во вложенной детали — сборка валидна!
+                }
+            }
+        }
+
+        return false;
+    }
+
+
 
 
 }

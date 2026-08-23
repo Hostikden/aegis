@@ -84,7 +84,12 @@ class ProductionTasksRelationManager extends RelationManager
                     ->visible(fn (ProductionTask $record) => $record->status === 'pending')
                     ->action(fn (ProductionTask $record) => $record->update(['status' => 'in_progress'])),
 
-                // 2. КНОПКА "ВЫПОЛНИТЬ" С АВТОСПИСАНИЕМ И ПРОВЕРКОЙ BOM
+
+
+
+
+
+                             // 2. КНОПКА "ВЫПОЛНИТЬ" С ТОЧЕЧНЫМ ПОДЕТАЛЬНЫМ СПИСАНИЕМ СЫРЬЯ
                 Tables\Actions\Action::make('complete_work')
                     ->label('Выполнить')
                     ->icon('heroicon-m-check-circle')
@@ -92,30 +97,50 @@ class ProductionTasksRelationManager extends RelationManager
                     ->visible(fn (ProductionTask $record) => $record->status === 'in_progress')
                     ->requiresConfirmation()
                     ->modalHeading('Завершение операции')
-                    ->modalDescription('Подтвердите выполнение этапа. Если это Заготовительная операция — металл снимется с резерва и спишется со склада.')
+                    ->modalDescription('Подтвердите выполнение этапа. Со склада спишется металл строго под эту деталь партии.')
                     ->action(function (ProductionTask $record) {
                         $order = $record->order;
                         $product = $order?->product;
+                        $service = app(\App\Services\ProductionService::class);
 
                         if (stripos($record->operation_name, 'Заготовительная') !== false) {
                             if ($product) {
-                                $hasMaterials = $product->productMaterials()->count() > 0;
+                                // УМНЫЙ ПОИСК ЦЕЛЕВОЙ ДЕТАЛИ: вытаскиваем модель детали прямо из текста названия операции
+                                // Текст операции выглядит так: "Опер. 10 [Заготовительная] — Наименование (чертёж СБ-123)"
+                                $targetProduct = null;
+
+                                if ($product->type === 'detail') {
+                                    $targetProduct = $product;
+                                } elseif ($product->type === 'assembly') {
+                                    // Проходим по всем компонентам сборки и ищем тот, чья деталь упоминается в операции
+                                    foreach ($product->components as $component) {
+                                        if (str_contains($record->operation_name, "({$component->sku})") ||
+                                            str_contains($record->operation_name, "{$component->sku}")) {
+                                            $targetProduct = $component;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Если деталь определить не удалось (например, ручной нестандартный этап), списываем по умолчанию по заказу
+                                $productForValidation = $targetProduct ?? $product;
+                                $hasMaterials = $service->hasMaterialsInBom($productForValidation);
 
                                 if (!$hasMaterials) {
                                     \Filament\Notifications\Notification::make()
                                         ->title('🚨 Операция заблокирована!')
-                                        ->body("Для изделия \"{$product->name}\" не настроены нормы расхода материалов (BOM). Списание невозможно.")
+                                        ->body("Для обрабатываемой детали не настроены нормы расхода материалов (BOM). Списание невозможно.")
                                         ->danger()
                                         ->send();
                                     return;
                                 }
 
-                                if (class_exists(\App\Services\ProductionService::class)) {
-                                    app(\App\Services\ProductionService::class)->debitMaterialsFromReserve($order);
-                                }
+                                // ЗАПУСКАЕМ ТОЧЕЧНОЕ СПИСАНИЕ: Передаем конкретную деталь в сервис
+                                $service->debitMaterialsFromReserve($order, $productForValidation);
                             }
                         }
 
+                        // Переводим статус задачи в "Выполнен"
                         $record->update(['status' => 'completed']);
 
                         \Filament\Notifications\Notification::make()
@@ -124,6 +149,7 @@ class ProductionTasksRelationManager extends RelationManager
                             ->success()
                             ->send();
                     }),
+
 
                 Tables\Actions\EditAction::make()->label('Редактировать'),
                 Tables\Actions\DeleteAction::make()->label('Удалить'),
@@ -135,3 +161,4 @@ class ProductionTasksRelationManager extends RelationManager
             ]);
     }
 }
+
