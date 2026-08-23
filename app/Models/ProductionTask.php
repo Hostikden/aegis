@@ -12,6 +12,7 @@ class ProductionTask extends Model
 
     protected $fillable = [
         'order_id',
+        'item_number', // <-- РАЗРЕШИЛИ ЗАПИСЬ НОВОГО НОМЕРА ITEM
         'operation_name',
         'status',
         'quantity_to_do',

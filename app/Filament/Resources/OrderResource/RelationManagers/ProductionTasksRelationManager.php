@@ -103,7 +103,7 @@ class ProductionTasksRelationManager extends RelationManager
                         if (stripos($record->operation_name, 'Заготовительная') !== false) {
                             return 'Подтвердите выполнение этапа. Внимание: металл для этой детали будет автоматически снят с резерва и списан со склада!';
                         }
-                        return 'Вы подтверждаете завершение данной технологической операции?';
+                        return 'Вы подтверждаете завершение данной технологической операции? Изменений на складе материалов не произойдет.';
                     })
 
                     ->action(function (ProductionTask $record) {

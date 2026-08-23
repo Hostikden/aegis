@@ -79,6 +79,9 @@ class OrderResource extends Resource
                     ->sortable()
                     ->fontFamily('mono'),
 
+
+
+
                 Tables\Columns\TextColumn::make('product.name')
                     ->label('Изделие')
                     ->searchable()
