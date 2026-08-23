@@ -49,35 +49,143 @@ class ProductResource extends Resource
                             ->live(), // Перерисовывает форму при изменении типа
                     ])->columns(3),
 
-                // Секция 2: Спецификация металла (BOM) — Видна ТОЛЬКО для деталей
-                Forms\Components\Section::make('Нормы расхода сырья (BOM)')
-                    ->description('Укажите металл со склада для производства этой детали')
-                    ->visible(fn (Forms\Get $get) => $get('type') === 'detail')
-                    ->schema([
-                        Forms\Components\Repeater::make('productMaterials')
-                            ->relationship()
-                            ->schema([
-                                Forms\Components\Select::make('material_id')
-                                    ->label('Материал со склада')
-                                    ->options(fn () => Material::all()->mapWithKeys(function ($mat) {
-                                        $thickness = $mat->thickness ? ", {$mat->thickness}мм" : '';
-                                        return [$mat->id => "{$mat->name} ({$mat->grade}{$thickness})"];
-                                    }))
-                                    ->searchable()
-                                    ->preload()
-                                    ->required(),
+ // Секция 2: Автоматический расчет спецификации металла (BOM) — только для простых деталей
+Forms\Components\Repeater::make('productMaterials')
+    ->relationship('productMaterials')
 
-                                Forms\Components\TextInput::make('consumption_rate')
-                                    ->label('Норма расхода (м / м²)')
-                                    ->numeric()
-                                    ->minValue(0.001)
-                                    ->required(),
-                            ])
-                            ->columns(2)
-                            ->defaultItems(0)
-                            ->addActionLabel('Добавить металл в спецификацию')
+    // МУТАТОР ДЛЯ СОЗДАНИЯ: Удаляет служебные поля калькулятора перед записью в БД
+    ->mutateRelationshipDataBeforeCreateUsing(function (array $data): array {
+        unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width'], $data['allowance_factor']);
+        return $data;
+    })
+
+    // МУТАТОР ДЛЯ РЕДАКТИРОВАНИЯ: Удаляет служебные поля калькулятора перед обновлением БД
+    ->mutateRelationshipDataBeforeSaveUsing(function (array $data): array {
+        unset($data['material_type'], $data['material_grade'], $data['detail_length'], $data['detail_width'], $data['allowance_factor']);
+        return $data;
+    })
+    ->schema([
+        Forms\Components\Repeater::make('productMaterials')
+            ->relationship('productMaterials')
+            ->schema([
+
+                // 1. Выбор типа проката
+                Forms\Components\Select::make('material_type')
+                    ->label('Тип проката')
+                    ->options([
+                        'Пруток' => '🔩 Пруток',
+                        'Труба' => '🧪 Труба',
+                        'Плита' => '⬜ Плита / Лист',
+                    ])
+                    ->required()
+                    ->live()
+                    ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
+                    ->afterStateUpdated(function (Forms\Set $set) {
+                        $set('material_grade', null);
+                        $set('material_id', null);
+                    }),
+
+                // 2. Выбор марки стали
+                Forms\Components\Select::make('material_grade')
+                    ->label('Марка стали / Сплав')
+                    ->options(function (Forms\Get $get) {
+                        $type = $get('material_type');
+                        if (!$type) return [];
+
+                        return \App\Models\Material::where('name', $type)
+                            ->whereNotNull('grade')
+                            ->distinct()
+                            ->pluck('grade', 'grade');
+                    })
+                    ->searchable()
+                    ->required()
+                    ->live()
+                    ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
+                    ->disabled(fn (Forms\Get $get) => !$get('material_type'))
+                    ->afterStateUpdated(fn (Forms\Set $set) => $set('material_id', null)),
+
+                // 3. Выбор конкретного профиля (Этот ID сохраняем, поэтому dehydrated НЕ НУЖЕН)
+                Forms\Components\Select::make('material_id')
+                    ->label('Профиль / Сортамент со склада')
+                    ->options(function (Forms\Get $get) {
+                        $type = $get('material_type');
+                        $grade = $get('material_grade');
+                        if (!$type || !$grade) return [];
+
+                        return \App\Models\Material::where('name', $type)
+                            ->where('grade', $grade)
+                            ->get()
+                            ->mapWithKeys(function ($mat) {
+                                $sizeInfo = '';
+                                if ($mat->name === 'Плита' && $mat->thickness) $sizeInfo = " (Толщина: {$mat->thickness} мм)";
+                                if (in_array($mat->name, ['Пруток', 'Труба']) && $mat->diameter) $sizeInfo = " (Ø {$mat->diameter} мм)";
+                                return [$mat->id => "ID {$mat->id}{$sizeInfo}"];
+                            });
+                    })
+                    ->searchable()
+                    ->preload()
+                    ->required()
+                    ->live()
+                    ->disabled(fn (Forms\Get $get) => !$get('material_grade')),
+
+                // Поля геометрии детали
+                Forms\Components\Grid::make(3)
+                    ->schema([
+                        Forms\Components\TextInput::make('detail_length')
+                            ->label('Длина детали (мм)')
+                            ->numeric()
+                            ->minValue(1)
+                            ->required()
+                            ->live(onBlur: true)
+                            ->placeholder('150')
+                            ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
+                            ->visible(fn (Forms\Get $get) => filled($get('material_id')))
+                            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
+
+                        Forms\Components\TextInput::make('detail_width')
+                            ->label('Ширина детали (мм)')
+                            ->numeric()
+                            ->minValue(1)
+                            ->required()
+                            ->live(onBlur: true)
+                            ->placeholder('200')
+                            ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
+                            ->visible(fn (Forms\Get $get) => $get('material_type') === 'Плита' && filled($get('material_id')))
+                            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
+
+                        Forms\Components\TextInput::make('allowance_factor')
+                            ->label('Коэф. припуска (отходов)')
+                            ->numeric()
+                            ->default(1.0)
+                            ->minValue(1.0)
+                            ->required()
+                            ->live(onBlur: true)
+                            ->dehydrated(false) // <--- ИЗМЕНЕНО: Не отправляем в БД
+                            ->helperText('1.0 — без отходов, 1.05 — плюс 5% на рез')
+                            ->visible(fn (Forms\Get $get) => filled($get('material_id')))
+                            ->afterStateUpdated(fn (Forms\Get $get, Forms\Set $set) => self::calculateBomRate($get, $set)),
                     ]),
-                // Секция 3: Состав сборки — Видна ТОЛЬКО для сборочных единиц
+
+                // Итоговый расход (Его мы СОХРАНЯЕМ, поэтому dehydrated(true))
+                Forms\Components\TextInput::make('consumption_rate')
+                    ->label(fn (Forms\Get $get) => $get('material_type') === 'Плита' ? 'Итого норма расхода (м²)' : 'Итого норма расхода (пог. м)')
+                    ->numeric()
+                    ->required()
+                    ->disabled()
+                    ->dehydrated() // Принудительно сохраняем в базу данных рассчитанное значение
+                    ->prefix('📊')
+                    ->helperText('Высчитывается автоматически на основе геометрии детали')
+                    ->visible(fn (Forms\Get $get) => filled($get('material_id'))),
+            ])
+            ->columns(3)
+            ->defaultItems(0)
+            ->addActionLabel('Добавить материал в спецификацию')
+    ]),
+
+
+
+
+                    // Секция 3: Состав сборки — Видна ТОЛЬКО для сборочных единиц
                 Forms\Components\Section::make('Состав сборочной единицы')
                     ->description('Укажите, из каких вложенных деталей или узлов состоит данная сборка')
                     ->visible(fn (Forms\Get $get) => $get('type') === 'assembly')
@@ -110,6 +218,42 @@ class ProductResource extends Resource
                     ]),
             ]);
     }
+
+
+    /**
+ * Функция автоматического пересчета норм расхода (BOM) на основе габаритов детали
+ */
+public static function calculateBomRate(Forms\Get $get, Forms\Set $set): void
+{
+    $type = $get('material_type');
+    $length = floatval($get('detail_length'));
+    $width = floatval($get('detail_width'));
+    $allowance = floatval($get('allowance_factor') ?? 1.0);
+
+    if (!$type || $length <= 0) {
+        $set('consumption_rate', 0);
+        return;
+    }
+
+    if ($type === 'Плита') {
+        // Расчет для плит: (Длина (мм) * Ширина (мм) / 1 000 000) * Коэффициент отхода = Квадратные метры (м²)
+        if ($width > 0) {
+            $areaSquareMeters = ($length * $width) / 1000000;
+            $finalRate = $areaSquareMeters * $allowance;
+            $set('consumption_rate', round($finalRate, 5)); // Округляем до 5 знаков для точности
+        } else {
+            $set('consumption_rate', 0);
+        }
+    } else {
+        // Расчет для Прутков и Труб: Длина детали (мм) / 1000 * Коэффициент отхода = Погонные метры (м)
+        $linearMeters = $length / 1000;
+        $finalRate = $linearMeters * $allowance;
+        $set('consumption_rate', round($finalRate, 5));
+    }
+}
+
+
+
     public static function table(Table $table): Table
     {
         return $table
