@@ -3,7 +3,6 @@
 namespace App\Filament\Resources\MaterialResource\Pages;
 
 use App\Filament\Resources\MaterialResource;
-use App\Filament\Resources\MaterialResource\Widgets\MaterialDeficitWidget;
 use Filament\Actions;
 use Filament\Resources\Pages\ListRecords;
 
@@ -19,21 +18,32 @@ class ListMaterials extends ListRecords
         ];
     }
 
-    /**
-     * ПОДКЛЮЧЕНИЕ ВИДЖЕТА: Выводим карточки дефицита в самом верху страницы
+    // МЫ ПОЛНОСТЬЮ УДАЛИЛИ МЕТОДЫ ВЫЗОВА ВИДЖЕТА, КОТОРЫЙ ВЫЗЫВАЛ ОШИБКУ 419!
+
+        /**
+     * НАСТРОЙКА НА ТИВНЫХ ВКЛАДОК: Фильтрация дефицита сырья прямо над таблицей склада
      */
-    protected function getHeaderWidgets(): array
+    public function getTabs(): array
     {
+        // Считаем количество позиций, где бронь под производство превышает остатки на складе
+        $deficitCount = \App\Models\Material::all()->filter(function ($material) {
+            return (float) $material->reserved > (float) $material->quantity;
+        })->count();
+
         return [
-            MaterialDeficitWidget::class,
+            // Вкладка 1: Показывает весь склад без ограничений
+            'all' => ListRecords\Tab::make('Все материалы')
+                ->icon('heroicon-m-squares-2x2'),
+
+            // Вкладка 2: Фильтрует и выводит только позиции с нехваткой сырья
+            'deficit' => ListRecords\Tab::make('🚨 Дефицит' . ($deficitCount > 0 ? " ({$deficitCount})" : ''))
+                ->badge($deficitCount > 0 ? $deficitCount : null)
+                ->badgeColor('danger')
+                ->modifyQueryUsing(function (\Illuminate\Database\Eloquent\Builder $query) {
+                    // Передаем SQL-запрос для вывода только дефицитных строк
+                    return $query->whereRaw('reserved > quantity');
+                }),
         ];
     }
 
-    /**
-     * Задаем количество колонок для сетки виджетов (максимум 3 карточки в ряд)
-     */
-    public function getHeaderWidgetsColumns(): int | array
-    {
-        return 3;
-    }
 }

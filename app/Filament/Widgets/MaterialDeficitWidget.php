@@ -9,37 +9,38 @@ use Filament\Widgets\StatsOverviewWidget\Stat;
 class MaterialDeficitWidget extends BaseWidget
 {
     /**
-     * Конструктор карточек предупреждений о дефиците металлов и комплектующих
+     * Конструктор карточек дефицита (Исправлен баг с ошибкой 419 / Page Expired)
      */
     protected function getStats(): array
     {
-        // Находим на складе позиции, где зарезервировано больше, чем есть физически в наличии
-        $deficitMaterials = Material::whereRaw('reserved > quantity')->get();
+        // ИСПРАВЛЕНО: Заменили капризный whereRaw на чистый, безопасный метод фильтрации через коллекции Eloquent
+        $deficitMaterials = Material::all()->filter(function ($material) {
+            return (float) $material->reserved > (float) $material->quantity;
+        });
 
         $stats = [];
 
         foreach ($deficitMaterials as $material) {
             // Вычисляем чистый объем нехватки
-            $shortage = $material->reserved - $material->quantity;
+            $shortage = (float) $material->reserved - (float) $material->quantity;
 
-            // Определяем единицу измерения для красивого вывода
             $unit = match ($material->name) {
                 'Плита' => 'м²',
                 'Покупное изделие' => 'шт.',
                 default => 'м'
             };
 
-            // Формируем красную карточку-предупреждение
+            // Формируем карточку-предупреждение
             $stats[] = Stat::make(
                 label: "🚨 ДЕФИЦИТ: {$material->name} ({$material->grade})",
-                value: "- {$shortage} {$unit}"
+                value: "- " . round($shortage, 4) . " {$unit}"
             )
-            ->description("В наличии: {$material->quantity} | Требуется брони: {$material->reserved}")
+            ->description("В наличии: {$material->quantity} | В резерве под заказы: {$material->reserved}")
             ->descriptionIcon('heroicon-m-exclamation-triangle')
             ->color('danger');
         }
 
-        // Если дефицита на заводе нет, выводим одну зелёную карточку «Всё в порядке»
+        // Если дефицита на складе нет — выводим одну спокойную зелёную карточку
         if (empty($stats)) {
             $stats[] = Stat::make('Состояние склада сырья', 'Дефицит отсутствует')
                 ->description('Все текущие заказы цеха полностью обеспечены материалами')

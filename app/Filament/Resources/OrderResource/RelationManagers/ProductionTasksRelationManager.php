@@ -82,9 +82,16 @@ class ProductionTasksRelationManager extends RelationManager
                     ->icon('heroicon-m-play')
                     ->color('warning')
                     ->visible(fn (ProductionTask $record) => $record->status === 'pending')
-                    ->action(fn (ProductionTask $record) => $record->update(['status' => 'in_progress'])),
+                    ->action(function (ProductionTask $record) {
+                        $record->update(['status' => 'in_progress']);
 
-                // 2. КНОПКА "ВЫПОЛНИТЬ" С ДИНАМИЧЕСКИМ ТЕКСТОМ ПРЕДУПРЕЖДЕНИЯ
+                        $order = $record->order;
+                        if ($order && $order->status === 'pending') {
+                            $order->update(['status' => 'in_progress']);
+                        }
+                    }),
+
+                // 2. КНОПКА "ВЫПОЛНИТЬ" С АВТОСПИСАНИЕМ И ИНТЕЛЛЕКТУАЛЬНЫМ ФИНИШЕМ ЗАКАЗА
                 Tables\Actions\Action::make('complete_work')
                     ->label('Выполнить')
                     ->icon('heroicon-m-check-circle')
@@ -103,7 +110,7 @@ class ProductionTasksRelationManager extends RelationManager
                         if (stripos($record->operation_name, 'Заготовительная') !== false) {
                             return 'Подтвердите выполнение этапа. Внимание: металл для этой детали будет автоматически снят с резерва и списан со склада!';
                         }
-                        return 'Вы подтверждаете завершение данной технологической операции?';
+                        return 'Вы подтверждаете завершение данной технологической операции? Изменений на складе материалов не произойдет.';
                     })
 
                     ->action(function (ProductionTask $record) {
@@ -143,13 +150,38 @@ class ProductionTasksRelationManager extends RelationManager
                             }
                         }
 
+                        // Сохраняем статус текущей задачи
                         $record->update(['status' => 'completed']);
 
-                        \Filament\Notifications\Notification::make()
-                            ->title('Успешно')
-                            ->body('Операция успешно завершена!')
-                            ->success()
-                            ->send();
+                        if ($order) {
+                            if ($order->status === 'pending') {
+                                $order->update(['status' => 'in_progress']);
+                            }
+
+                            // Сверяем количество незакрытых технологических этапов
+                            $uncompletedTasksCount = $order->productionTasks()
+                                ->where('id', '!=', $record->id)
+                                ->where('status', '!=', 'completed')
+                                ->count();
+
+                            // Если все шаги закрыты — переводим сам заказ в выполненные!
+                            if ($uncompletedTasksCount === 0) {
+                                $order->update(['status' => 'completed']);
+
+                                \Filament\Notifications\Notification::make()
+                                    ->title('🎉 Заказ полностью готов!')
+                                    ->body("Все технологические этапы выполнены. Заказ №{$order->order_number} автоматически переведен в статус 'Выполнен'.")
+                                    ->success()
+                                    ->persistent()
+                                    ->send();
+                            } else {
+                                \Filament\Notifications\Notification::make()
+                                    ->title('Успешно')
+                                    ->body('Операция успешно завершена!')
+                                    ->success()
+                                    ->send();
+                            }
+                        }
                     }),
 
                 Tables\Actions\EditAction::make()->label('Редактировать'),

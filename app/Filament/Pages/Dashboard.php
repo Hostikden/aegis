@@ -3,9 +3,10 @@
 namespace App\Filament\Pages;
 
 use App\Models\ProductionTask;
-use App\Filament\Resources\OrderResource; // ИСПРАВЛЕНО: Добавили пропущенный импорт ресурса!
+use App\Filament\Resources\OrderResource;
 use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Section;
 use Filament\Pages\Dashboard as BaseDashboard;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -33,13 +34,11 @@ class Dashboard extends BaseDashboard implements HasTable
                     ->badge()
                     ->color('info')
                     ->fontFamily('mono')
-                    ->searchable()
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('order.order_number')
                     ->label('№ Заказа')
                     ->fontFamily('mono')
-                    ->searchable()
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('operation_name')
@@ -70,24 +69,34 @@ class Dashboard extends BaseDashboard implements HasTable
             ->filters([
                 Tables\Filters\Filter::make('task_search_filter')
                     ->form([
-                        Grid::make(4)
+                        // ВИЗУАЛЬНЫЙ АНКОР: Обернули фильтры в стильную карточку общего стиля
+                        Section::make('Панель быстрого поиска по цеху')
+                            ->description('Введите данные для мгновенной фильтрации технологических задач и чертежей')
+                            ->aside() // Сдвигает заголовок влево, освобождая место под поля ввода
                             ->schema([
-                                TextInput::make('order_number')
-                                    ->label('📝 Номер заказа')
-                                    ->placeholder('ЗП-2026-001'),
+                                Grid::make(2) // Сетка в два столбца для идеального выравнивания
+                                    ->schema([
+                                        TextInput::make('order_number')
+                                            ->label('Номер заказа')
+                                            ->placeholder('ЗП-2026-001')
+                                            ->prefixIcon('heroicon-m-document-text'),
 
-                                TextInput::make('item_number')
-                                    ->label('🌟 Номер итема')
-                                    ->placeholder('10001')
-                                    ->numeric(),
+                                        TextInput::make('item_number')
+                                            ->label('Номер итема (ID)')
+                                            ->placeholder('10001')
+                                            ->numeric()
+                                            ->prefixIcon('heroicon-m-star'),
 
-                                TextInput::make('product_name')
-                                    ->label('📦 Название изделия')
-                                    ->placeholder('Вал / Кронштейн'),
+                                        TextInput::make('product_name')
+                                            ->label('Название готового изделия')
+                                            ->placeholder('Кронштейн опорный / Вал')
+                                            ->prefixIcon('heroicon-m-cube'),
 
-                                TextInput::make('operation_keyword')
-                                    ->label('⚙️ Название детали/операции')
-                                    ->placeholder('Токарная / Корпус'),
+                                        TextInput::make('operation_keyword')
+                                            ->label('Название детали / Ключевое слово')
+                                            ->placeholder('Токарная / Корпус фильтра')
+                                            ->prefixIcon('heroicon-m-cog-6-tooth'),
+                                    ]),
                             ]),
                     ])
                     ->query(function (\Illuminate\Database\Eloquent\Builder $query, array $data): \Illuminate\Database\Eloquent\Builder {

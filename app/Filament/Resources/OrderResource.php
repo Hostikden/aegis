@@ -20,6 +20,7 @@ class OrderResource extends Resource
     protected static ?string $navigationLabel = 'Заказы на производство';
     protected static ?string $modelLabel = 'Заказ';
     protected static ?string $pluralModelLabel = 'Заказы';
+    protected static ?int $navigationSort = 3;
 
     public static function form(Form $form): Form
     {
@@ -79,9 +80,6 @@ class OrderResource extends Resource
                     ->sortable()
                     ->fontFamily('mono'),
 
-
-
-
                 Tables\Columns\TextColumn::make('product.name')
                     ->label('Изделие')
                     ->searchable()
@@ -110,10 +108,7 @@ class OrderResource extends Resource
                         default => $state,
                     }),
 
-
-
-
-                                    Tables\Columns\TextColumn::make('deadline')
+                Tables\Columns\TextColumn::make('deadline')
                     ->label('Срок сдачи / Время')
                     ->date('d.m.Y')
                     ->sortable()
@@ -121,26 +116,25 @@ class OrderResource extends Resource
                         if (!$record->deadline || $record->status === 'completed') return 'gray';
                         return $record->deadline->isPast() ? 'danger' : 'gray';
                     })
-                    // ДИНАМИЧЕСКИЙ ВЫВОД: Общая трудоемкость изделия + Оставшееся время до закрытия заказа
+                    // ДИНАМИЧЕСКИЙ ВЫВОД: Вывод даты фактического закрытия заказа
                     ->description(function (Order $record): string|\Illuminate\Contracts\Support\Htmlable {
                         if ($record->status === 'completed') {
-                            return '🛠️ Выполнено';
+                            $completedDate = $record->updated_at ? $record->updated_at->format('d.m.Y') : date('d.m.Y');
+                            return "🛠️ Выполнено: {$completedDate}";
                         }
+
                         if (!$record->product) {
                             return 'Нет изделия';
                         }
 
                         $service = app(\App\Services\ProductionService::class);
 
-                        // 1. Считаем общую неизменную трудоемкость по чертежу
                         $totalMinutes = $service->calculateProductionTimeInMinutes($record->product, $record->total_quantity);
                         $humanTotalTime = $service->formatMinutesToHumanTime($totalMinutes);
 
-                        // 2. Считаем динамический остаток по незакрытым операциям (наш новый функционал)
                         $remainingMinutes = $service->calculateRemainingProductionTimeInMinutes($record);
                         $humanRemainingTime = $service->formatMinutesToHumanTime($remainingMinutes);
 
-                        // Чтобы на экране строки выглядели структурированно, возвращаем HTML-блок
                         return new \Illuminate\Support\HtmlString("
                             <div class='text-xs space-y-0.5 text-gray-500'>
                                 <div>⏱️ Общий план: {$humanTotalTime}</div>
@@ -148,7 +142,6 @@ class OrderResource extends Resource
                             </div>
                         ");
                     }),
-
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
