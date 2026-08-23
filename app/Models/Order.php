@@ -36,4 +36,21 @@ class Order extends Model
     {
         return $this->hasMany(ProductionTask::class);
     }
+
+        /**
+     * Хуки жизненного цикла модели заказа
+     */
+    protected static function booted(): void
+    {
+        static::deleting(function (Order $order) {
+            // Если заказ удаляется в статусе "В очереди" или "В работе" (когда резерв еще держится)
+            if (in_array($order->status, ['pending', 'in_progress'])) {
+                // Вызываем метод сервиса для безопасного уменьшения колонки reserved на складе
+                if (class_exists(\App\Services\ProductionService::class)) {
+                    app(\App\Services\ProductionService::class)->cancelReservationForOrder($order);
+                }
+            }
+        });
+    }
+
 }

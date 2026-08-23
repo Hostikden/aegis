@@ -77,20 +77,67 @@ class ProductionService
         });
     }
 
-    /**
-     * ШАГ 3: Аннулирование резерва (Вызывается при отмене заказа)
+      /**
+     * ШАГ 3: Аннулирование резерва (Вызывается при отмене ИЛИ удалении заказа)
      */
     public function cancelReservationForOrder(Order $order): void
     {
+        // Рекурсивно собираем всю потребность в металле и штуках для этого изделия
         $requirements = $this->calculateRequiredMaterials($order->product, $order->total_quantity);
 
         DB::transaction(function () use ($requirements) {
             foreach ($requirements as $materialId => $volume) {
-                $material = Material::findOrFail($materialId);
-                $material->decrement('reserved', min($material->reserved, $volume));
+                $material = Material::find($materialId);
+
+                if ($material) {
+                    // Уменьшаем резерв, но следим, чтобы он не ушел в минус ниже нуля (защита базы)
+                    $newReserved = max(0, $material->reserved - $volume);
+                    $material->update(['reserved' => $newReserved]);
+                }
             }
         });
     }
+
+
+
+    /**
+     * ШАГ 4: Умное до-резервирование (Вызывается кнопкой из заказа при изменении BOM технологом)
+     */
+    public function syncAndFixOrderReservations(Order $order): array
+    {
+        // Рассчитываем чистую актуальную потребность в металле на текущую секунду
+        $currentRequirements = $this->calculateRequiredMaterials($order->product, $order->total_quantity);
+
+        $addedCount = 0;
+        $warnings = [];
+
+        DB::transaction(function () use ($currentRequirements, &$addedCount, &$warnings) {
+            foreach ($currentRequirements as $materialId => $requiredVolume) {
+                $material = Material::find($materialId);
+
+                if (!$material) {
+                    continue;
+                }
+
+                // Проверяем, хватает ли свободного металла на складе для обеспечения новой брони
+                $available = $material->quantity - $material->reserved;
+
+                if ($available < $requiredVolume) {
+                    $warnings[] = "🚨 На складе дефицит! Для \"{$material->grade}\" требуется забронировать {$requiredVolume}, но свободно всего {$available}. Пополните склад.";
+                }
+
+                // Накатываем честный актуальный резерв
+                $material->increment('reserved', $requiredVolume);
+                $addedCount++;
+            }
+        });
+
+        return [
+            'success' => $addedCount > 0,
+            'warnings' => $warnings
+        ];
+    }
+
 
 
 
@@ -129,6 +176,9 @@ class ProductionService
     /**
      * Отформатировать минуты в красивую строку (дни, часы, минуты)
      */
+       /**
+     * Отформатировать минуты в красивую строку на основе 8-часового рабочего дня (смены)
+     */
     public function formatMinutesToHumanTime(float $minutes): string
     {
         if ($minutes <= 0) {
@@ -137,16 +187,29 @@ class ProductionService
 
         $minutes = round($minutes);
 
-        $days = floor($minutes / 1440); // 1440 минут в сутках
-        $hours = floor(($minutes % 1440) / 60);
-        $remainingMinutes = $minutes % 60;
+        // 1 рабочий день (смена) = 8 часов * 60 минут = 480 минут
+        $workDays = floor($minutes / 480);
+
+        // Остаток минут после вычета полных рабочих дней переводим в часы
+        $remainingMinutesAfterDays = $minutes % 480;
+        $hours = floor($remainingMinutesAfterDays / 60);
+
+        // Остаток чистых минут
+        $remainingMinutes = $remainingMinutesAfterDays % 60;
 
         $result = [];
-        if ($days > 0) $result[] = "{$days} дн.";
-        if ($hours > 0) $result[] = "{$hours} ч.";
-        if ($remainingMinutes > 0 || empty($result)) $result[] = "{$remainingMinutes} мин.";
+        if ($workDays > 0) {
+            $result[] = "{$workDays} раб. дн.";
+        }
+        if ($hours > 0) {
+            $result[] = "{$hours} ч.";
+        }
+        if ($remainingMinutes > 0 || empty($result)) {
+            $result[] = "{$remainingMinutes} мин.";
+        }
 
         return implode(' ', $result);
     }
+
 
 }

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\OrderResource\RelationManagers;
 
+use App\Models\ProductionTask;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -40,7 +41,6 @@ class ProductionTasksRelationManager extends RelationManager
                     ->required(),
             ])->columns(1);
     }
-
     public function table(Table $table): Table
     {
         return $table
@@ -56,35 +56,82 @@ class ProductionTasksRelationManager extends RelationManager
                     ->alignCenter(),
 
                 Tables\Columns\TextColumn::make('status')
-    ->label('Статус операции')
-    ->badge()
-    ->color(fn (string $state): string => match ($state) {
-        'pending' => 'gray',
-        'in_progress' => 'warning',
-        'completed' => 'success',
-        default => 'gray', // Защита от падения!
-    })
-    ->formatStateUsing(fn (string $state): string => match ($state) {
-        'pending' => '⏳ В очереди',
-        'in_progress' => '⚙️ В работе',
-        'completed' => '✅ Выполнен',
-        default => $state, // Защита от падения! ИСПРАВЛЕНО
-    }),
-
-
-                Tables\Columns\TextColumn::make('updated_at')
-                    ->label('Обновлено')
-                    ->dateTime('d.m.Y H:i')
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->label('Статус')
+                    ->badge()
+                    ->color(fn (string $state): string => match ($state) {
+                        'pending' => 'gray',
+                        'in_progress' => 'warning',
+                        'completed' => 'success',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'pending' => '⏳ В очереди',
+                        'in_progress' => '⚙️ В работе',
+                        'completed' => '✅ Выполнен',
+                        default => $state,
+                    }),
             ])
             ->filters([])
             ->headerActions([
-                Tables\Actions\CreateAction::make()
-                    ->label('Добавить нестандартный этап'),
+                Tables\Actions\CreateAction::make()->label('Добавить нестандартный этап'),
             ])
             ->actions([
+                // 1. КНОПКА "В РАБОТУ"
+                Tables\Actions\Action::make('start_work')
+                    ->label('В работу')
+                    ->icon('heroicon-m-play')
+                    ->color('warning')
+                    ->visible(fn (ProductionTask $record) => $record->status === 'pending')
+                    ->action(fn (ProductionTask $record) => $record->update(['status' => 'in_progress'])),
+
+                // 2. КНОПКА "ВЫПОЛНИТЬ" С АВТОСПИСАНИЕМ И ПРОВЕРКОЙ BOM
+                Tables\Actions\Action::make('complete_work')
+                    ->label('Выполнить')
+                    ->icon('heroicon-m-check-circle')
+                    ->color('success')
+                    ->visible(fn (ProductionTask $record) => $record->status === 'in_progress')
+                    ->requiresConfirmation()
+                    ->modalHeading('Завершение операции')
+                    ->modalDescription('Подтвердите выполнение этапа. Если это Заготовительная операция — металл снимется с резерва и спишется со склада.')
+                    ->action(function (ProductionTask $record) {
+                        $order = $record->order;
+                        $product = $order?->product;
+
+                        if (stripos($record->operation_name, 'Заготовительная') !== false) {
+                            if ($product) {
+                                $hasMaterials = $product->productMaterials()->count() > 0;
+
+                                if (!$hasMaterials) {
+                                    \Filament\Notifications\Notification::make()
+                                        ->title('🚨 Операция заблокирована!')
+                                        ->body("Для изделия \"{$product->name}\" не настроены нормы расхода материалов (BOM). Списание невозможно.")
+                                        ->danger()
+                                        ->send();
+                                    return;
+                                }
+
+                                if (class_exists(\App\Services\ProductionService::class)) {
+                                    app(\App\Services\ProductionService::class)->debitMaterialsFromReserve($order);
+                                }
+                            }
+                        }
+
+                        $record->update(['status' => 'completed']);
+
+                        \Filament\Notifications\Notification::make()
+                            ->title('Успешно')
+                            ->body('Операция успешно завершена!')
+                            ->success()
+                            ->send();
+                    }),
+
                 Tables\Actions\EditAction::make()->label('Редактировать'),
                 Tables\Actions\DeleteAction::make()->label('Удалить'),
+            ])
+            ->bulkActions([
+                Tables\Actions\BulkActionGroup::make([
+                    Tables\Actions\DeleteBulkAction::make(),
+                ]),
             ]);
     }
 }

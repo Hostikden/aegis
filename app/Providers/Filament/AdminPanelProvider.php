@@ -20,18 +20,21 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
 {
-    public function panel(Panel $panel): Panel
+public function panel(Panel $panel): Panel
     {
         return $panel
             ->default()
             ->id('admin')
             ->path('admin')
             ->login()
+            // ВКЛЮЧАЕМ ГОРИЗОНТАЛЬНУЮ ШАПКУ: Переносит меню наверх и растягивает таблицы во всю ширину экрана!
+            ->topNavigation()
             ->colors([
-                'primary' => Color::Amber,
+                'primary' => \Filament\Support\Colors\Color::Amber,
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
+
             ->pages([
                 Pages\Dashboard::class,
             ])

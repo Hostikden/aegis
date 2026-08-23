@@ -2,17 +2,42 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Product extends Model
 {
-    // Разрешаем сохранение полей
-    protected $fillable = ['sku', 'name', 'type'];
+    use HasFactory;
+
+    protected $fillable = [
+        'sku',
+        'name',
+        'type',
+    ];
 
     /**
-     * СВЯЗЬ С МАТЕРИАЛАМИ (Этого метода, скорее всего, сейчас нет в файле)
+     * Связь: Из каких деталей состоит данная сборка
+     */
+    /**
+     * Связь: Из каких деталей состоит данная сборка (Спецификация узлов)
+     */
+    public function components(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(
+            Product::class,
+            'product_components',
+            'parent_id',
+            'child_id' // ЖЕСТКО ЗАФИКСИРОВАНО: имя колонки из вашей локальной базы данных
+        )
+        ->withPivot('quantity')
+        ->withTimestamps();
+    }
+
+
+    /**
+     * Связь: Нормы расхода сырья и комплектующих (BOM) для детали
      */
     public function productMaterials(): HasMany
     {
@@ -20,37 +45,11 @@ class Product extends Model
     }
 
     /**
-     * СВЯЗЬ С КОМПОНЕНТАМИ СБОРКИ
+     * Связь: Маршрутная карта (Техпроцесс) обработки детали
      */
-    public function components(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    public function operations(): HasMany
     {
-        return $this->belongsToMany(Product::class, 'product_components', 'parent_id', 'product_id')
-            ->withPivot('quantity') // <-- ОБЯЗАТЕЛЬНО для корректной работы рекурсии времени
-            ->withTimestamps();
+        // Сортируем по номеру, чтобы операции всегда шли в правильном порядке: 10, 20, 30...
+        return $this->hasMany(ProductOperation::class, 'product_id')->orderBy('operation_number');
     }
-
-
-
-    /**
-     * ОБРАТНАЯ СВЯЗЬ ДЛЯ СБОРОК
-     */
-    public function parentAssemblies(): BelongsToMany
-    {
-        return $this->belongsToMany(
-            Product::class,
-            'product_components',
-            'product_id',
-            'parent_id'
-        )
-        ->withPivot('quantity')
-        ->withTimestamps();
-    }
-
-    public function operations(): \Illuminate\Database\Eloquent\Relations\HasMany
-{
-    // Сортируем операции по номеру (10, 20, 30...), чтобы они всегда шли по порядку
-    return $this->hasMany(ProductOperation::class)->orderBy('operation_number');
-}
-
-
 }

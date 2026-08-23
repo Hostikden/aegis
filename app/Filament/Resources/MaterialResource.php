@@ -19,6 +19,7 @@ class MaterialResource extends Resource
     protected static ?string $navigationLabel = 'Склад материалов';
     protected static ?string $modelLabel = 'Материал';
     protected static ?string $pluralModelLabel = 'Материалы';
+    protected static ?int $navigationSort = 1;
 
     public static function form(Form $form): Form
     {
@@ -67,7 +68,7 @@ class MaterialResource extends Resource
                             ->label('Толщина плиты (мм)')
                             ->numeric()
                             ->required()
-                            ->visible(fn (Get $get): bool => $get('name') === 'Пliта')
+                            ->visible(fn (Get $get): bool => $get('name') === 'Плита') // ИСПРАВЛЕНО (Убрана опечатка Пliта)
                             ->disabled($isNotAdmin),
 
                         Forms\Components\TextInput::make('width')
@@ -182,6 +183,13 @@ class MaterialResource extends Resource
             ]);
     }
 
+    public static function getRelations(): array
+    {
+        return [
+            \App\Filament\Resources\MaterialResource\RelationManagers\HistoryRelationManager::class,
+        ];
+    }
+
     public static function getPages(): array
     {
         return [
@@ -205,13 +213,4 @@ class MaterialResource extends Resource
     {
         return auth()->user()->role === 'admin';
     }
-
-        public static function getRelations(): array
-    {
-        return [
-            // ВОЗВРАЩАЕМ ИСТОРИЮ: Подключаем отображение вкладки движений материала
-            \App\Filament\Resources\MaterialResource\RelationManagers\HistoryRelationManager::class,
-        ];
-    }
-
 }
