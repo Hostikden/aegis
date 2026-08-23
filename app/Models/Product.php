@@ -22,18 +22,13 @@ class Product extends Model
     /**
      * СВЯЗЬ С КОМПОНЕНТАМИ СБОРКИ
      */
-public function components(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
-{
-    // Меняем последний аргумент с 'product_id' на 'child_id'
-    return $this->belongsToMany(
-        Product::class,
-        'product_components',
-        'parent_id',
-        'child_id' // <--- Указываем вашу реальную колонку из БД
-    )
-    ->withPivot('quantity')
-    ->withTimestamps();
-}
+    public function components(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Product::class, 'product_components', 'parent_id', 'product_id')
+            ->withPivot('quantity') // <-- ОБЯЗАТЕЛЬНО для корректной работы рекурсии времени
+            ->withTimestamps();
+    }
+
 
 
     /**

@@ -69,8 +69,7 @@ class OrderResource extends Resource
                     ])->columns(2),
             ]);
     }
-
-       public static function table(Table $table): Table
+    public static function table(Table $table): Table
     {
         return $table
             ->columns([
@@ -98,42 +97,41 @@ class OrderResource extends Resource
                         'in_progress' => 'warning',
                         'completed' => 'success',
                         'cancelled' => 'danger',
-                        default => 'gray', // Защита от unhandled case для цвета
+                        default => 'gray',
                     })
                     ->formatStateUsing(fn (string $state): string => match ($state) {
                         'pending' => 'В очереди',
                         'in_progress' => 'В работе',
                         'completed' => 'Выполнен',
                         'cancelled' => 'Отменен',
-                        default => $state, // Защита от unhandled case для текста
+                        default => $state,
                     }),
 
                 Tables\Columns\TextColumn::make('deadline')
-    ->label('Срок сдачи')
-    ->date('d.m.Y')
-    ->sortable()
-    // БЕЗОПАСНЫЙ ЦВЕТ: Заменяем match и сложные цепочки на простые проверки
-    ->color(function (Order $record): string {
-        if (!$record->deadline) {
-            return 'gray';
-        }
+                    ->label('Срок сдачи / Время')
+                    ->date('d.m.Y')
+                    ->sortable()
+                    ->color(function (Order $record): string {
+                        if (!$record->deadline || $record->status === 'completed') return 'gray';
+                        return $record->deadline->isPast() ? 'danger' : 'gray';
+                    })
+                    // УМНЫЙ ВЫВОД ВРЕМЕНИ НА ИЗГОТОВЛЕНИЕ ИЗ ТЕХПРОЦЕССОВ
+                    ->description(function (Order $record): string {
+                        if ($record->status === 'completed') {
+                            return '🛠️ Выполнено';
+                        }
+                        if (!$record->product) {
+                            return 'Нет изделия';
+                        }
 
-        // Если заказ уже выполнен, дата всегда горит обычным серым цветом
-        if ($record->status === 'completed') {
-            return 'gray';
-        }
+                        $service = app(\App\Services\ProductionService::class);
+                        $totalMinutes = $service->calculateProductionTimeInMinutes($record->product, $record->total_quantity);
+                        $humanTime = $service->formatMinutesToHumanTime($totalMinutes);
 
-        // Если дедлайн просрочен, подсвечиваем его красным (danger)
-        if ($record->deadline->isPast()) {
-            return 'danger';
-        }
-
-        return 'gray';
-    }),
-
+                        return "⏱️ План работ: {$humanTime}";
+                    }),
             ])
             ->filters([
-                // ИСПРАВЛЕНО: Явно прописали опции для фильтра, убрав любые скрытые вызовы match фреймворка
                 Tables\Filters\SelectFilter::make('status')
                     ->label('Фильтр по статусу')
                     ->options([
@@ -154,7 +152,6 @@ class OrderResource extends Resource
             ]);
     }
 
-
     public static function getRelations(): array
     {
         return [
@@ -166,11 +163,10 @@ class OrderResource extends Resource
     {
         return [
             'index' => Pages\ListOrders::route('/'),
-            'create' => Pages\CreateOrder::route('/create'), // ИСПРАВЛЕНО: теперь ссылается на CreateOrder
+            'create' => Pages\CreateOrder::route('/create'),
             'edit' => Pages\EditOrder::route('/{record}/edit'),
         ];
     }
-
 
     public static function canViewAny(): bool
     {

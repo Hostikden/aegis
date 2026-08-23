@@ -91,4 +91,62 @@ class ProductionService
             }
         });
     }
+
+
+
+        /**
+     * Рассчитать общее время изготовления изделия (в минутах) с учетом Тшт и Тпз
+     */
+    public function calculateProductionTimeInMinutes(Product $product, int $orderQuantity): float
+    {
+        $totalMinutes = 0;
+
+        if ($product->type === 'detail') {
+            // Если это деталь, берем время из её техпроцесса
+            foreach ($product->operations as $operation) {
+                $pieceTime = floatval($operation->piece_time ?? 0);
+                $prepTime = floatval($operation->prep_time ?? 0);
+
+                // Формула: Тпз + (Тшт * Кол-во деталей)
+                $totalMinutes += $prepTime + ($pieceTime * $orderQuantity);
+            }
+        } elseif ($product->type === 'assembly') {
+            // Если это сборка, рекурсивно считаем время изготовления всех деталей
+            foreach ($product->components as $component) {
+                // Кол-во детали в 1 сборке * Общий объем заказа на сборку
+                $totalComponentQuantity = $component->pivot->quantity * $orderQuantity;
+
+                $totalMinutes += $this->calculateProductionTimeInMinutes($component, $totalComponentQuantity);
+            }
+
+            // Добавляем 60 минут на финальную сборку самого узла в цеху
+            $totalMinutes += 60;
+        }
+
+        return $totalMinutes;
+    }
+
+    /**
+     * Отформатировать минуты в красивую строку (дни, часы, минуты)
+     */
+    public function formatMinutesToHumanTime(float $minutes): string
+    {
+        if ($minutes <= 0) {
+            return 'не задано';
+        }
+
+        $minutes = round($minutes);
+
+        $days = floor($minutes / 1440); // 1440 минут в сутках
+        $hours = floor(($minutes % 1440) / 60);
+        $remainingMinutes = $minutes % 60;
+
+        $result = [];
+        if ($days > 0) $result[] = "{$days} дн.";
+        if ($hours > 0) $result[] = "{$hours} ч.";
+        if ($remainingMinutes > 0 || empty($result)) $result[] = "{$remainingMinutes} мин.";
+
+        return implode(' ', $result);
+    }
+
 }
