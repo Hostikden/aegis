@@ -15,41 +15,41 @@ class Product extends Model
         'sku',
         'name',
         'type',
+        'drawing_files', // Разрешили массовую запись массива чертежей
     ];
 
     /**
-     * Связь: Из каких деталей состоит данная сборка
+     * Автоматическое преобразование массива файлов чертежей в JSON при записи в БД
      */
-    /**
-     * Связь: Из каких деталей состоит данная сборка (Спецификация узлов)
-     */
-    public function components(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
-    {
-        return $this->belongsToMany(
-            Product::class,
-            'product_components',
-            'parent_id',
-            'child_id' // ЖЕСТКО ЗАФИКСИРОВАНО: имя колонки из вашей локальной базы данных
-        )
-        ->withPivot('quantity')
-        ->withTimestamps();
-    }
-
+    protected $casts = [
+        'drawing_files' => 'array',
+    ];
 
     /**
-     * Связь: Нормы расхода сырья и комплектующих (BOM) для детали
+     * Связь: Материалы и комплектующие детали (BOM спецификация)
      */
     public function productMaterials(): HasMany
     {
-        return $this->hasMany(ProductMaterial::class, 'product_id');
+        return $this->hasMany(ProductMaterial::class);
     }
-
     /**
-     * Связь: Маршрутная карта (Техпроцесс) обработки детали
+     * Связь: Маршрутная технологическая карта (Операции детали)
      */
     public function operations(): HasMany
     {
-        // Сортируем по номеру, чтобы операции всегда шли в правильном порядке: 10, 20, 30...
-        return $this->hasMany(ProductOperation::class, 'product_id')->orderBy('operation_number');
+        return $this->hasMany(ProductOperation::class)->orderBy('operation_number', 'asc');
     }
-}
+
+    /**
+     * Связь: Входящие компоненты (Если данное изделие является Сборкой)
+     */
+    public function components(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Product::class,
+            'product_components', // Имя промежуточной таблицы связей
+            'parent_id',          // Внешний ключ родительского узла
+            'child_id'            // Внешний ключ вложенной детали
+        )->withPivot('quantity')->withTimestamps();
+    }
+} // Конец класса Product

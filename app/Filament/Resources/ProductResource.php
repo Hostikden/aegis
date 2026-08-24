@@ -23,132 +23,192 @@ class ProductResource extends Resource
     protected static ?string $pluralModelLabel = 'Изделия';
     protected static ?int $navigationSort = 2;
 
-    public static function form(Form $form): Form
+
+
+
+        public function form(Form $form): Form
     {
         return $form
             ->schema([
-                // Секция 1: Основные данные изделия
-                Forms\Components\Section::make('Информация об изделии')
+                Forms\Components\Group::make()
                     ->schema([
-                        Forms\Components\TextInput::make('sku')
-                            ->label('Артикул / Чертеж №')
-                            ->placeholder('СБ-104-02')
-                            ->unique(ignoreRecord: true)
-                            ->required(),
-
-                        Forms\Components\TextInput::make('name')
-                            ->label('Наименование')
-                            ->placeholder('Кронштейн опорный / Узел в сборе')
-                            ->required(),
-
-                        Forms\Components\Select::make('type')
-                            ->label('Тип изделия')
-                            ->options([
-                                'detail' => '🔩 Простая деталь (из сырья)',
-                                'assembly' => '📦 Сборочная единица (из деталей)',
-                            ])
-                            ->default('detail')
-                            ->required()
-                            ->live(),
-                ])->columns(3),
-                // Секция 2: Нормы расхода сырья и комплектации (BOM)
-                Forms\Components\Section::make('Нормы расхода сырья и комплектации (BOM)')
-                    ->description('Выберите параметры материала и укажите габариты заготовки для авторасчета')
-                    ->visible(fn (Get $get) => $get('type') === 'detail')
-                    ->schema([
-                        Forms\Components\Repeater::make('productMaterials')
-                            ->relationship('productMaterials')
+                        // СЕКЦИЯ 1: ОСНОВНАЯ ИНФОРМАЦИЯ
+                        Forms\Components\Section::make('Основная информация')
                             ->schema([
-                                Forms\Components\Select::make('material_type')
-                                    ->label('Тип проката / Покупное')
+                                Forms\Components\TextInput::make('name')
+                                    ->label('Наименование изделия / детали')
+                                    ->required()
+                                    ->maxLength(255),
+
+                                Forms\Components\TextInput::make('sku')
+                                    ->label('Артикул / Чертеж')
+                                    ->unique(ignoreRecord: true)
+                                    ->required()
+                                    ->maxLength(255),
+
+                                Forms\Components\Select::make('type')
+                                    ->label('Тип изделия')
                                     ->options([
-                                        'Пруток' => '🔩 Пруток',
-                                        'Труба' => '🧪 Труба',
-                                        'Плита' => '⬜ Плита / Лист',
-                                        'Покупное изделие' => '📦 Покупное изделие',
+                                        'detail' => '⚙️ Деталь (Изготавливаемая)',
+                                        'assembly' => '🏗️ Сборка (Из нескольких деталей)',
                                     ])
                                     ->required()
-                                    ->live()
-                                    ->afterStateUpdated(function (Set $set) {
-                                        $set('material_grade', null);
-                                        $set('material_id', null);
-                                        $set('consumption_rate', 0);
-                                    }),
+                                    ->live(),
+                            ])->columns(2),
+
+                        // СЕКЦИЯ 2: BOM (МАТЕРИАЛЫ)
+                        Forms\Components\Section::make('Нормы расхода сырья и комплектации (BOM)')
+                            ->description('Выберите параметры материала и укажите габариты заготовки для авторасчета')
+                            ->visible(fn (Get $get) => $get('type') === 'detail')
+                            ->schema([
+                                Forms\Components\Repeater::make('productMaterials')
+                                    ->relationship('productMaterials')
+                                    ->schema([
+                                        Forms\Components\Select::make('material_type')
+                                            ->label('Тип проката / Покупное')
+                                            ->options([
+                                                'Пруток' => '🔩 Пруток',
+                                                'Труба' => '🧪 Труба',
+                                                'Плита' => '⬜ Плита / Лист',
+                                                'Покупное изделие' => '📦 Покупное изделие',
+                                            ])
+                                            ->required()
+                                            ->live(),
 
                                         Forms\Components\Select::make('material_grade')
-                                    ->label('Марка стали / Наименование')
-                                    ->options(function (Get $get) {
-                                        $type = $get('material_type');
-                                        if (!$type) return [];
-                                        return Material::where('name', $type)
-                                            ->whereNotNull('grade')
-                                            ->distinct()
-                                            ->pluck('grade', 'grade');
-                                    })
-                                    ->searchable()
-                                    ->required()
-                                    ->live()
-                                    ->disabled(fn (Get $get) => !$get('material_type'))
-                                    // УМНЫЙ ХУК: Мгновенно заполняет скрытую ячейку нужным ID со склада
-                                    ->afterStateUpdated(function (Get $get, Set $set, $state) {
-                                        if ($get('material_type') === 'Покупное изделие') {
-                                            if ($state) {
-                                                $material = Material::where('name', 'Покупное изделие')
-                                                    ->where('grade', $state)
-                                                    ->first();
+                                            ->label('Марка стали / Наименование')
+                                            ->options(function (Get $get) {
+                                                $type = $get('material_type');
+                                                if (!$type) return [];
+                                                return \App\Models\Material::where('name', $type)
+                                                    ->whereNotNull('grade')
+                                                    ->distinct()
+                                                    ->pluck('grade', 'grade')
+                                                    ->toArray();
+                                            })
+                                            ->searchable()
+                                            ->required()
+                                            ->live()
+                                            ->disabled(fn (Get $get) => !$get('material_type')),
 
-                                                if ($material) {
-                                                    // Записываем ID в скрытое поле
-                                                    $set('material_id', $material->id);
-                                                } else {
-                                                    $set('material_id', null);
-                                                }
-                                            } else {
-                                                $set('material_id', null);
-                                            }
-                                        } else {
-                                            // Если переключили обратно на металл, сбрасываем сортамент для ручного выбора
-                                            $set('material_id', null);
-                                        }
-                                    }),
+                                        Forms\Components\Select::make('material_id')
+                                            ->label('Профиль / Сортамент со склада')
+                                            ->options(function (Get $get) {
+                                                $type = $get('material_type');
+                                                $grade = $get('material_grade');
+                                                if (!$type || !$grade) return [];
 
-                                      // ИСПРАВЛЕНО: Сортамент со склада для проката (виден только для металла)
+                                                return \App\Models\Material::where('name', $type)
+                                                    ->where('grade', $grade)
+                                                    ->get()
+                                                    ->mapWithKeys(function ($mat) {
+                                                        $sizeInfo = '';
+                                                        if ($mat->name === 'Плита' && $mat->thickness) $sizeInfo = " (Толщина: {$mat->thickness} мм)";
+                                                        if (in_array($mat->name, ['Пруток', 'Труба']) && $mat->diameter) $sizeInfo = " (Ø {$mat->diameter} мм)";
+                                                        return [$mat->id => "ID {$mat->id}{$sizeInfo}"];
+                                                    })
+                                                    ->toArray();
+                                            })
+                                            ->searchable()
+                                            ->preload()
+                                            ->live()
+                                            ->required(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
+                                            ->visible(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
+                                            ->disabled(fn (Get $get) => !$get('material_grade')),
+                                    ])
+                                    ->columns(3),
+                            ]),
+
+                        // СЕКЦИЯ 3: СОСТАВ СБОРКИ
+                        Forms\Components\Section::make('Состав сборки (Компоненты)')
+                            ->visible(fn (Get $get) => $get('type') === 'assembly')
+                            ->schema([
+                                Forms\Components\Repeater::make('assembly_components')
+                                    ->schema([
+                                        Forms\Components\Select::make('component_product_id')
+                                            ->label('Деталь / Узел')
+                                            ->options(\App\Models\Product::pluck('name', 'id')->toArray())
+                                            ->searchable()
+                                            ->required(),
+
+                                        Forms\Components\TextInput::make('component_quantity')
+                                            ->label('Количество (шт)')
+                                            ->numeric()
+                                            ->default(1)
+                                            ->minValue(1)
+                                            ->required(),
+                                    ])
+                                    ->columns(2),
+                            ]),
+                    ])->columnSpan(['lg' => 2]),
+
+                // БОКОВАЯ ПАНЕЛЬ СТАТУСА
+                Forms\Components\Group::make()
+                    ->schema([
+                        Forms\Components\Section::make('Статус')
+                            ->schema([
+                                Forms\Components\Toggle::make('is_active')
+                                    ->label('Активно для производства')
+                                    ->default(true),
+                            ]),
+                    ])->columnSpan(['lg' => 1]),
+            ])
+            ->columns(3);
+    }
 
 
-                                      Forms\Components\Select::make('material_id')
-                                    ->label('Профиль / Сортамент со склада')
-                                    ->options(function (Get $get) {
-                                        $type = $get('material_type');
-                                        $grade = $get('material_grade');
-                                        if (!$type || !$grade) return [];
-
-                                        return Material::where('name', $type)
-                                            ->where('grade', $grade)
-                                            ->get()
-                                            ->mapWithKeys(function ($mat) {
-                                                $sizeInfo = '';
-                                                if ($mat->name === 'Плита' && $mat->thickness) $sizeInfo = " (Толщина: {$mat->thickness} мм)";
-                                                if (in_array($mat->name, ['Пруток', 'Труба']) && $mat->diameter) $sizeInfo = " (Ø {$mat->diameter} мм)";
-                                                return [$mat->id => "ID {$mat->id}{$sizeInfo}"];
-                                            });
-                                    })
-                                    ->searchable()
-                                    ->preload()
-                                    ->required() // Поле остается обязательным для проката!
-                                    ->visible(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
-                                    ->live()
-                                    ->disabled(fn (Get $get) => !$get('material_grade')),
-
-                                // МАГИЯ СКРЫТОГО ПОЛЯ: Автоматически хранит ID для покупных изделий, технолог его не видит
-                                Forms\Components\Hidden::make('material_id')
-                                    ->dehydrated() // Принудительно отправляет значение в базу данных при сохранении
-                                    ->required()   // MySQL полностью доволен, так как поле никогда не будет null
-                                    ->visible(fn (Get $get) => $get('material_type') === 'Покупное изделие'),
 
 
 
 
-                                    Forms\Components\Grid::make(2)
+// 1. ПОЛЕ ВЫБОРА МАРКИ СТАЛИ / НАИМЕНОВАНИЯ
+Forms\Components\Select::make('material_grade')
+    ->label('Марка стали / Наименование')
+    ->options(function (Get $get) {
+        $type = $get('material_type');
+        if (!$type) return [];
+        return Material::where('name', $type)
+            ->whereNotNull('grade')
+            ->distinct()
+            ->pluck('grade', 'grade');
+    })
+    ->searchable()
+    ->required()
+    ->live(),
+
+// 2. ВЫБОР СОРТАМЕНТА (Показывается ТОЛЬКО для проката: Пруток, Труба, Плита)
+Forms\Components\Select::make('material_id')
+    ->label('Профиль / Сортамент со склада')
+    ->options(function (Get $get) {
+        $type = $get('material_type');
+        $grade = $get('material_grade');
+        if (!$type || !$grade) return [];
+
+        return Material::where('name', $type)
+            ->where('grade', $grade)
+            ->get()
+            ->mapWithKeys(function ($mat) {
+                $sizeInfo = '';
+                if ($mat->name === 'Плита' && $mat->thickness) $sizeInfo = " (Толщина: {$mat->thickness} мм)";
+                if (in_array($mat->name, ['Пруток', 'Труба']) && $mat->diameter) $sizeInfo = " (Ø {$mat->diameter} мм)";
+                return [$mat->id => "ID {$mat->id}{$sizeInfo}"];
+            });
+    })
+    ->searchable()
+    ->preload()
+    ->live()
+    // Обязательно только для проката. Для покупных изделий пользователь это поле НЕ ВИДИТ
+    ->required(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
+    ->visible(fn (Get $get) => $get('material_type') !== 'Покупное изделие'),
+
+
+
+
+
+
+
+
+                                Forms\Components\Grid::make(2)
                                     ->schema([
                                         Forms\Components\TextInput::make('detail_length')
                                             ->label('Длина заготовки (мм)')
@@ -182,7 +242,6 @@ class ProductResource extends Resource
                                     ->disabled(fn (Get $get) => $get('material_type') !== 'Покупное изделие')
                                     ->dehydrated()
                                     ->prefix('📊')
-                                    // УМНАЯ ВИДИМОСТЬ: Открывается сразу для покупных изделий
                                     ->visible(fn (Get $get) => match ($get('material_type')) {
                                         'Покупное изделие' => filled($get('material_grade')),
                                         default => filled($get('material_id'))
@@ -192,7 +251,7 @@ class ProductResource extends Resource
                             ->defaultItems(0)
                             ->addActionLabel('Добавить позицию в спецификацию')
                 ]),
-                // Секция 3: Состав сборки — только для сборочных единиц
+                // Секция 3: Состав сборки
                 Forms\Components\Section::make('Состав сборочной единицы')
                     ->description('Укажите, из каких вложенных деталей состоит данная сборка')
                     ->visible(fn (Get $get) => $get('type') === 'assembly')
@@ -223,7 +282,7 @@ class ProductResource extends Resource
                             ->addActionLabel('Добавить деталь в состав сборки'),
                     ]),
 
-                // Секция 4: Настройка техпроцесса
+                // Секция 4: Настройка техпроцесса с авторасчетом шагов по 10
                 Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
                     ->description('Составьте пошаговый маршрут обработки детали и укажите нормы времени')
                     ->visible(fn (Get $get) => $get('type') === 'detail')
@@ -252,7 +311,7 @@ class ProductResource extends Resource
                                         'Слесарная' => '🪛 Слесарная',
                                         'Сварочная' => '👨‍🏭 Сварочная',
                                         'Подряд' => '🚚 Подряд (Сторонние работы)',
-                                        'ОТК' => '🔍 Контроль (ОТК)',
+                                        'ОТК' => '🔍 ...Контроль (ОТК)',
                                     ])
                                     ->required()
                                     ->searchable()

@@ -15,7 +15,15 @@ class EditOrder extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
-            // УМНАЯ КНОПКА ОБНОВЛЕНИЯ РЕЗЕРВОВ
+            // НОВАЯ КНОПКА: Печать производственного паспорта деталей
+            Actions\Action::make('print_passport')
+                ->label('🖨️ Печать паспорта заказа')
+                ->color('success')
+                // Открывает созданный нами Route в новой вкладке браузера
+                ->url(fn () => route('orders.print-passport', ['order' => $this->record->id]))
+                ->openUrlInNewTab(),
+
+            // Кнопка обновления резервов
             Actions\Action::make('sync_reservations')
                 ->label('🔄 Проверить и обновить резервы')
                 ->color('info')
@@ -26,20 +34,16 @@ class EditOrder extends EditRecord
                     $order = $this->record;
                     $service = app(ProductionService::class);
 
-                    // Сначала очищаем старый (неполный) резерв, чтобы избежать задваивания
                     $service->cancelReservationForOrder($order);
-
-                    // Накатываем новый актуальный резерв с учетом заполненных карточек деталей
                     $result = $service->syncAndFixOrderReservations($order);
 
-                    // Если склад выдал предупреждения о дефиците металла
                     if (!empty($result['warnings'])) {
                         foreach ($result['warnings'] as $warning) {
                             Notification::make()
                                 ->title('Внимание! Дефицит на складе')
                                 ->body($warning)
                                 ->warning()
-                                ->persistent() // Уведомление не исчезнет, пока не закроют
+                                ->persistent()
                                 ->send();
                         }
                     }
@@ -50,7 +54,6 @@ class EditOrder extends EditRecord
                         ->success()
                         ->send();
 
-                    // Перерисовываем страницу, чтобы обновились свободные остатки
                     $this->refreshFormData([]);
                 }),
 

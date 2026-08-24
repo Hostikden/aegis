@@ -47,7 +47,7 @@ class MaterialResource extends Resource
                             ->required()
                             ->disabled($isNotAdmin),
                     ])->columns(2),
-                Forms\Components\Section::make('Характеристики геометрии')
+       Forms\Components\Section::make('Характеристики геометрии')
                     ->schema([
                         Forms\Components\TextInput::make('length')
                             ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Длина плиты (мм)' : 'Длина единицы / хлыста (м)')
@@ -60,27 +60,28 @@ class MaterialResource extends Resource
                         Forms\Components\TextInput::make('diameter')
                             ->label('Диаметр (мм)')
                             ->numeric()
-                            ->required()
+                            ->required(fn (Get $get): bool => in_array($get('name'), ['Пруток', 'Труба']))
                             ->visible(fn (Get $get): bool => in_array($get('name'), ['Пруток', 'Труба']))
                             ->disabled($isNotAdmin),
 
                         Forms\Components\TextInput::make('thickness')
                             ->label('Толщина плиты (мм)')
                             ->numeric()
-                            ->required()
-                            ->visible(fn (Get $get): bool => $get('name') === 'Плита') // ИСПРАВЛЕНО (Убрана опечатка Пliта)
+                            ->required(fn (Get $get): bool => $get('name') === 'Плита')
+                            ->visible(fn (Get $get): bool => $get('name') === 'Плита')
                             ->disabled($isNotAdmin),
 
                         Forms\Components\TextInput::make('width')
                             ->label('Ширина плиты (мм)')
                             ->numeric()
-                            ->required()
+                            ->required(fn (Get $get): bool => $get('name') === 'Плита')
                             ->live(onBlur: true)
                             ->visible(fn (Get $get): bool => $get('name') === 'Плита')
                             ->disabled($isNotAdmin),
                     ])
                     ->visible(fn (Get $get): bool => filled($get('name')) && $get('name') !== 'Покупное изделие')
                     ->columns(3),
+
 
                 Forms\Components\Section::make('Складской остаток')
                     ->schema([
