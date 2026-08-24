@@ -178,7 +178,6 @@ class ProductResource extends Resource
                             ->visible(fn (Get $get) => $get('type') === 'assembly')
                             ->schema([
                                 Forms\Components\Repeater::make('assembly_components')
-                                    ->relationship('components')
                                     ->schema([
                                         Forms\Components\Select::make('component_product_id')
                                             ->label('Входящая деталь / узел')
