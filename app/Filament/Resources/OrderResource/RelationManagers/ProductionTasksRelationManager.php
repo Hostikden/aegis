@@ -49,10 +49,20 @@ class ProductionTasksRelationManager extends RelationManager
         return $table
             ->recordTitleAttribute('operation_name')
             ->columns([
+                Tables\Columns\TextColumn::make('item_number')
+                    ->label('Item')
+                    ->alignCenter(),
+
                 Tables\Columns\TextColumn::make('operation_name')
-                    ->label('Технологическая операция / Задача')
+                    ->label('Технологическая операция / Задача цеха')
                     ->weight('medium')
-                    ->searchable(),
+                    ->searchable()
+                    // Убираем служебный префикс "🌟 Item: N |" / "📦 Item: N |" из отображения —
+                    // сам номер позиции уже вынесен в отдельную колонку item_number выше.
+                    // Меняется только вид в таблице: $record->operation_name в БД остаётся
+                    // прежним и полностью, так что вся логика (поиск SKU, "Заготовительная",
+                    // расчёт оставшегося времени) продолжает работать без изменений.
+                    ->formatStateUsing(fn (string $state): string => trim(preg_replace('/^[^\|]*\|\s*/u', '', $state))),
 
                 Tables\Columns\TextColumn::make('quantity_to_do')
                     ->label('План (шт)')
