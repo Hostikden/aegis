@@ -4,32 +4,49 @@ namespace App\Filament\Resources\ProductResource\Pages;
 
 use App\Filament\Resources\ProductResource;
 use Filament\Resources\Pages\CreateRecord;
-use App\Models\Material;
 
 class CreateProduct extends CreateRecord
 {
     protected static string $resource = ProductResource::class;
 
-    protected function mutateFormDataBeforeCreate(array $data): array
-    {
-        // Перехватываем данные репитера productMaterials перед записью в БД
-        if (!empty($data['productMaterials']) && is_array($data['productMaterials'])) {
-            foreach ($data['productMaterials'] as $key => $item) {
-                if (isset($item['material_type']) && $item['material_type'] === 'Покупное изделие') {
-                    // Самостоятельно ищем ID покупного изделия в таблице материалов по его наименованию
-                    $material = Material::where('name', 'Покупное изделие')
-                        ->where('grade', $item['material_grade'] ?? null)
-                        ->first();
+    /**
+     * Логика подстановки material_id для "Покупного изделия" перенесена
+     * в сам репитер productMaterials (см. ProductResource::form(),
+     * ->mutateRelationshipDataBeforeCreateUsing()).
+     *
+     * Здесь эта мутация была бесполезна: репитер объявлен через
+     * ->relationship('productMaterials'), поэтому Filament сохраняет
+     * его строки отдельным вызовом saveRelationships(), а не берёт
+     * значения из $data, прошедшего через mutateFormDataBeforeCreate().
+     */
 
-                    if ($material) {
-                        $data['productMaterials'][$key]['material_id'] = $material->id;
-                    }
-                }
-            }
+    /**
+     * Состав сборки (assembly_components) — НЕ relationship-репитер,
+     * данные по нему нужно синхронизировать вручную в pivot-таблицу
+     * ПОСЛЕ того, как основная запись Product уже создана (иначе нет id).
+     */
+    protected function afterCreate(): void
+    {
+        $product = $this->record;
+
+        if ($product->type !== 'assembly') {
+            return;
         }
 
-        return $data;
+        $components = $this->form->getRawState()['assembly_components'] ?? [];
+
+        if (empty($components)) {
+            return;
+        }
+
+        foreach ($components as $component) {
+            if (empty($component['component_product_id'])) {
+                continue;
+            }
+
+            $product->components()->attach($component['component_product_id'], [
+                'quantity' => $component['component_quantity'] ?? 1,
+            ]);
+        }
     }
 }
-
-

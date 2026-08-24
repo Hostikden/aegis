@@ -272,7 +272,11 @@ class ProductionService
                 $product = $item->product;
                 if (!$product) continue;
 
-                if ($product->type === 'detail' && str_contains($task->operation_name, "({$product->sku})")) {
+                // ИСПРАВЛЕНО: CreateOrder::generateTasksForProduct() пишет артикул в виде
+                // "(чёртеж {$product->sku})", а не "({$product->sku})" — из-за слова
+                // "чёртеж" внутри скобок старое сравнение никогда не совпадало, и
+                // оставшееся время всегда считалось нулевым.
+                if ($product->type === 'detail' && str_contains($task->operation_name, "(чёртеж {$product->sku})")) {
                     foreach ($product->operations as $operation) {
                         if (stripos($task->operation_name, $operation->operation_name) !== false) {
                             $remainingMinutes += floatval($operation->prep_time ?? 0) + (floatval($operation->piece_time ?? 0) * $item->quantity);
@@ -281,7 +285,7 @@ class ProductionService
                     }
                 } elseif ($product->type === 'assembly') {
                     foreach ($product->components as $component) {
-                        if (str_contains($task->operation_name, "({$component->sku})")) {
+                        if (str_contains($task->operation_name, "(чёртеж {$component->sku})")) {
                             foreach ($component->operations as $operation) {
                                 if (stripos($task->operation_name, $operation->operation_name) !== false) {
                                     $totalQty = $component->pivot->quantity * $item->quantity;

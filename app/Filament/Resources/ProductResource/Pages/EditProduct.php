@@ -18,7 +18,13 @@ class EditProduct extends EditRecord
     }
 
     /**
-     * Шаг А: Перед открытием формы наполняем репитер данными из БД
+     * Шаг А: перед открытием формы наполняем репитер assembly_components
+     * данными из pivot-таблицы. Это нужно вручную, т.к. assembly_components
+     * НЕ подключён через ->relationship() (он завязан на pivot с доп. полем
+     * quantity, поэтому синхронизируется вручную в afterSave()).
+     *
+     * Репитер productMaterials трогать здесь не нужно — он объявлен как
+     * ->relationship('productMaterials') и Filament наполняет его сам.
      */
     protected function mutateFormDataBeforeFill(array $data): array
     {
@@ -37,86 +43,41 @@ class EditProduct extends EditRecord
     }
 
     /**
-     * Шаг Б: После сохранения карточки перезаписываем связи в pivot-таблице
+     * Шаг Б: после сохранения карточки перезаписываем pivot-связи сборки.
+     *
+     * Логика сохранения productMaterials здесь намеренно убрана:
+     * - репитер объявлен через ->relationship('productMaterials'), поэтому
+     *   Filament уже сам создаёт/обновляет/удаляет строки при сохранении
+     *   формы (через встроенный saveRelationships());
+     * - ручной блок, который был здесь раньше ($product->materials()->delete()
+     *   + пересоздание), дублировал и конфликтовал с этим механизмом,
+     *   а из-за опечатки в имени ключа ($data['product_materials'] вместо
+     *   $data['productMaterials']) фактически никогда не выполнялся.
+     *
+     * Подстановка material_id для "Покупного изделия" теперь делается
+     * в самом репитере через ->mutateRelationshipDataBeforeSaveUsing()
+     * (см. ProductResource::form()).
      */
-  protected function afterSave(): void
-{
-    $product = $this->record;
-    $data = $this->form->getRawState();
+    protected function afterSave(): void
+    {
+        $product = $this->record;
 
-    // 1. ЛОГИКА ДЛЯ СБОРКИ (Ваш исходный код)
-    if ($product->type === 'assembly') {
+        if ($product->type !== 'assembly') {
+            return;
+        }
+
         $product->components()->detach();
 
-        if (!empty($data['assembly_components'])) {
-            foreach ($data['assembly_components'] as $component) {
-                $product->components()->attach($component['component_product_id'], [
-                    'quantity' => $component['component_quantity'],
-                ]);
+        $components = $this->form->getRawState()['assembly_components'] ?? [];
+
+        foreach ($components as $component) {
+            if (empty($component['component_product_id'])) {
+                continue;
             }
+
+            $product->components()->attach($component['component_product_id'], [
+                'quantity' => $component['component_quantity'] ?? 1,
+            ]);
         }
     }
-
-    // 2. ИСПРАВЛЕНИЕ ОШИБКИ: ЛОГИКА ДЛЯ МАТЕРИАЛОВ И ПОКУПНЫХ ИЗДЕЛИЙ
-    // Проверьте, что в ProductResource.php ваш репитер называется именно 'product_materials'
-    if (!empty($data['product_materials'])) {
-
-        // Синхронизируем материалы: для простоты можно перезаписывать их при сохранении карточки
-        // (Убедитесь, что у модели Product есть связь materials() или productMaterials())
-        $product->materials()->delete();
-
-        foreach ($data['product_materials'] as $item) {
-            $materialId = $item['material_id'] ?? null;
-
-            // Если это Покупное изделие — принудительно вычисляем его ID на бэкенде
-            if (isset($item['material_type']) && $item['material_type'] === 'Покупное изделие') {
-                $material = \App\Models\Material::where('name', 'Покупное изделие')
-                    ->where('grade', $item['material_grade'])
-                    ->first();
-                $materialId = $material?->id;
-            }
-
-            // Записываем строку в таблицу product_materials без ошибок валидации SQL
-            if ($materialId) {
-                $product->materials()->create([
-                    'material_id'      => $materialId,
-                    'material_type'    => $item['material_type'],
-                    'material_grade'   => $item['material_grade'],
-                    'detail_length'    => $item['detail_length'] ?? null,
-                    'consumption_rate' => $item['consumption_rate'] ?? null,
-                ]);
-            }
-        }
-    }
-}
-
-
-
- /**
-     * Исправление ошибки валидации при редактировании материалов в репитере
-     */
-    protected function mutateFormDataBeforeSave(array $data): array
-    {
-        if (!empty($data['productMaterials']) && is_array($data['productMaterials'])) {
-            foreach ($data['productMaterials'] as $key => $item) {
-                if (isset($item['material_type']) && $item['material_type'] === 'Покупное изделие') {
-                    $material = Material::where('name', 'Покупное изделие')
-                        ->where('grade', $item['material_grade'] ?? null)
-                        ->first();
-
-                    if ($material) {
-                        $data['productMaterials'][$key]['material_id'] = $material->id;
-                    }
-                }
-            }
-        }
-
-        return $data;
-    }
-}
-
-
-
-
-
 }
