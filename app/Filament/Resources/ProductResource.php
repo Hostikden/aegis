@@ -186,7 +186,16 @@ class ProductResource extends Resource
 
                                                 return Product::where('type', 'detail')
                                                     ->when($currentId, fn ($query) => $query->where('id', '!=', $currentId))
-                                                    ->pluck('name', 'id');
+                                                    ->get()
+                                                    // ИСПРАВЛЕНО: раньше в выпадающем списке было видно только
+                                                    // название детали (name), а у разных чертежей название может
+                                                    // повторяться — было невозможно понять, какую именно деталь
+                                                    // выбираешь. Теперь рядом всегда виден номер чертежа (sku).
+                                                    ->mapWithKeys(fn (Product $product) => [
+                                                        $product->id => $product->sku
+                                                            ? "{$product->name} (чертёж {$product->sku})"
+                                                            : $product->name,
+                                                    ]);
                                             })
                                             ->searchable()
                                             ->preload()
