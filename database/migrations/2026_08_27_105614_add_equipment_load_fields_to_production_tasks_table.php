@@ -22,4 +22,4 @@ return new class extends Migration
             $table->dropColumn(['equipment_type', 'planned_minutes', 'started_at', 'completed_at']);
         });
     }
-};
+}
