@@ -31,8 +31,16 @@ class HistoryRelationManager extends RelationManager
                     ->numeric()
                     ->minValue(0.0001)
                     ->required()
-                    // Подхватывает м, м² или шт напрямую из карточки открытого материала
-                    ->suffix(fn () => " " . ($this->getOwnerRecord()->unit ?? 'м')),
+                    // ИСПРАВЛЕНО: раньше суффикс брался из сохранённого поля unit
+                    // (Hidden-поле в MaterialResource), которое могло сохраниться
+                    // некорректно и показывать "м" для плиты вместо "м²". Теперь
+                    // единица измерения вычисляется напрямую по типу материала —
+                    // так же, как в основном списке материалов.
+                    ->suffix(fn () => ' ' . match ($this->getOwnerRecord()->name) {
+                        'Плита' => 'м²',
+                        'Покупное изделие' => 'шт',
+                        default => 'м',
+                    }),
 
                 Forms\Components\TextInput::make('description')
                     ->label('Основание / Комментарий')
@@ -61,7 +69,11 @@ class HistoryRelationManager extends RelationManager
                 Tables\Columns\TextColumn::make('quantity')
                     ->label('Объем')
                     ->weight('bold')
-                    ->suffix(fn () => " " . ($this->getOwnerRecord()->unit ?? 'м')),
+                    ->suffix(fn () => ' ' . match ($this->getOwnerRecord()->name) {
+                        'Плита' => 'м²',
+                        'Покупное изделие' => 'шт',
+                        default => 'м',
+                    }),
 
                 Tables\Columns\TextColumn::make('description')
                     ->label('Основание / Комментарий')
