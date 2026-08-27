@@ -42,19 +42,28 @@ class CreateOrder extends CreateRecord
 
             if ($product->operations()->count() > 0) {
                 foreach ($product->operations as $operation) {
+                    $pieceTime = floatval($operation->piece_time ?? 0);
+                    $prepTime = floatval($operation->prep_time ?? 0);
+
                     $order->productionTasks()->create([
                         'item_number' => $nextItemNumber,
                         'operation_name' => "🌟 Item: {$nextItemNumber} | Опер. {$operation->operation_number} [{$operation->operation_name}] — {$product->name} (чёртеж {$product->sku})",
+                        // Тип оборудования берём напрямую из справочника операций,
+                        // а не парсим потом декоративную строку выше.
+                        'equipment_type' => $operation->operation_name,
                         'status' => 'pending',
                         'quantity_to_do' => $requiredQuantity,
+                        'planned_minutes' => $prepTime + ($pieceTime * $requiredQuantity),
                     ]);
                 }
             } else {
                 $order->productionTasks()->create([
                     'item_number' => $nextItemNumber,
                     'operation_name' => "🌟 Item: {$nextItemNumber} | Производство детали: {$product->name} (чёртеж {$product->sku}) — Техпроцесс не задан!",
+                    'equipment_type' => null,
                     'status' => 'pending',
                     'quantity_to_do' => $requiredQuantity,
+                    'planned_minutes' => 0,
                 ]);
             }
         }
@@ -75,8 +84,12 @@ class CreateOrder extends CreateRecord
             $order->productionTasks()->create([
                 'item_number' => $nextItemNumber,
                 'operation_name' => "📦 Item: {$nextItemNumber} | Финальная сборка узла: {$product->name} (чёртеж {$product->sku})",
+                // Сборка — отдельный "виртуальный" тип загрузки (участок сборки),
+                // время пока = 0, как и было в calculateProductionTimeInMinutes().
+                'equipment_type' => 'Сборка',
                 'status' => 'pending',
                 'quantity_to_do' => $requiredQuantity,
+                'planned_minutes' => 0,
             ]);
         }
     }
