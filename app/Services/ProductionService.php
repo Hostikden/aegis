@@ -282,7 +282,13 @@ class ProductionService
             $this->debitMaterialsFromReserve($order, $targetProduct);
         }
 
-        $task->update(['status' => 'completed']);
+        $task->update([
+            'status' => 'completed',
+            // Фиксируем фактическое время окончания этапа — нужно для отчёта
+            // по загрузке оборудования (getEquipmentLoadReport), иначе колонка
+            // "Факт" там всегда будет нулевой.
+            'completed_at' => now(),
+        ]);
 
         $orderCompleted = false;
 
@@ -427,6 +433,78 @@ class ProductionService
         }
 
         return $remainingMinutes;
+    }
+
+    /**
+     * Отчёт по загрузке оборудования, сгруппированный по типу операции
+     * (Токарная / Фрезерная / Сварочная и т.д.).
+     *
+     * Для каждого типа возвращает:
+     *  - backlog_minutes: плановая трудоёмкость всех ещё не завершённых задач
+     *    этого типа по всем заказам ("сколько стоит в очереди")
+     *  - overdue_minutes: то же самое, но только по заказам с просроченным
+     *    дедлайном (deadline < сегодня) и незавершённым статусом
+     *  - fact_minutes: суммарное фактическое время (completed_at - started_at)
+     *    по задачам, завершённым в переданном периоде [$from; $to]
+     *
+     * @return array<string, array{backlog_minutes: float, overdue_minutes: float, fact_minutes: float}>
+     */
+    public function getEquipmentLoadReport(?\Carbon\Carbon $from = null, ?\Carbon\Carbon $to = null): array
+    {
+        $report = [];
+
+        $ensureType = function (string $type) use (&$report) {
+            if (!isset($report[$type])) {
+                $report[$type] = [
+                    'backlog_minutes' => 0.0,
+                    'overdue_minutes' => 0.0,
+                    'fact_minutes' => 0.0,
+                ];
+            }
+        };
+
+        // --- План: всё, что ещё не выполнено ---
+        ProductionTask::query()
+            ->whereNotNull('equipment_type')
+            ->where('status', '!=', 'completed')
+            ->with('order')
+            ->get()
+            ->each(function (ProductionTask $task) use (&$report, $ensureType) {
+                $type = $task->equipment_type;
+                $ensureType($type);
+
+                $report[$type]['backlog_minutes'] += (float) $task->planned_minutes;
+
+                $deadline = $task->order?->deadline;
+                if ($deadline && $deadline->isPast() && $task->order->status !== 'completed') {
+                    $report[$type]['overdue_minutes'] += (float) $task->planned_minutes;
+                }
+            });
+
+        // --- Факт: что реально выполнено за период ---
+        $factQuery = ProductionTask::query()
+            ->whereNotNull('equipment_type')
+            ->whereNotNull('started_at')
+            ->whereNotNull('completed_at');
+
+        if ($from) {
+            $factQuery->where('completed_at', '>=', $from->copy()->startOfDay());
+        }
+        if ($to) {
+            $factQuery->where('completed_at', '<=', $to->copy()->endOfDay());
+        }
+
+        $factQuery->get()->each(function (ProductionTask $task) use (&$report, $ensureType) {
+            $type = $task->equipment_type;
+            $ensureType($type);
+
+            $minutes = $task->started_at->diffInMinutes($task->completed_at);
+            $report[$type]['fact_minutes'] += $minutes;
+        });
+
+        ksort($report);
+
+        return $report;
     }
 
     /**

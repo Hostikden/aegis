@@ -24,6 +24,22 @@ class ProductionTask extends Model
         'operator_id',
         'quantity_done',
         'quantity_scrapped',
+        // ИСПРАВЛЕНО: колонки существуют в БД (миграция
+        // add_equipment_load_fields_to_production_tasks_table), но не были
+        // в $fillable — CreateOrder::generateTasksForProduct() пытался их
+        // записать при создании задачи, но Laravel тихо отбрасывал эти поля
+        // при массовом create(), и отчёт по загрузке оборудования всегда
+        // получал equipment_type = null / planned_minutes = 0.
+        'equipment_type',
+        'planned_minutes',
+        'started_at',
+        'completed_at',
+    ];
+
+    protected $casts = [
+        'started_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'planned_minutes' => 'float',
     ];
 
     /**
@@ -34,14 +50,4 @@ class ProductionTask extends Model
         return $this->belongsTo(Order::class);
     }
 
-    /**
-     * ИСПРАВЛЕНО: связь отсутствовала полностью, хотя колонка operator_id
-     * в БД есть (внешний ключ на users), а Widgets\OperatorTasks обращался
-     * к $record->operator->name — без этого метода это падало с
-     * "Call to undefined method ProductionTask::operator()".
-     */
-    public function operator(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'operator_id');
-    }
 }

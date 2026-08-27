@@ -97,7 +97,12 @@ class ProductionTasksRelationManager extends RelationManager
                     ->color('warning')
                     ->visible(fn (ProductionTask $record) => $record->status === 'pending')
                     ->action(function (ProductionTask $record) {
-                        $record->update(['status' => 'in_progress']);
+                        $record->update([
+                            'status' => 'in_progress',
+                            // Фиксируем момент фактического начала работы над этапом —
+                            // нужно для отчёта по загрузке оборудования (колонка "Факт").
+                            'started_at' => $record->started_at ?? now(),
+                        ]);
 
                         $order = $record->order;
                         if ($order && $order->status === 'pending') {
