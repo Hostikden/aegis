@@ -84,7 +84,10 @@ class ProductionTasksRelationManager extends RelationManager
             ])
             ->filters([])
             ->headerActions([
-                Tables\Actions\CreateAction::make()->label('Добавить нестандартный этап'),
+                // Добавление нестандартных тех. операций теперь доступно только
+                // на странице создания/редактирования деталей и тех. операций
+                // (ProductResource), поэтому кнопка "Добавить нестандартный этап"
+                // здесь убрана.
             ])
             ->actions([
                 // 1. КНОПКА "В РАБОТУ"
@@ -154,13 +157,11 @@ class ProductionTasksRelationManager extends RelationManager
                         }
                     }),
 
-                Tables\Actions\EditAction::make()->label('Редактировать'),
-                Tables\Actions\DeleteAction::make()->label('Удалить'),
+                // Редактирование и удаление тех. операций перенесено на страницу
+                // создания/редактирования деталей и тех. операций (ProductResource).
+                // На странице заказа этап можно только двигать по статусам
+                // ("В работу" / "Выполнить"), поэтому EditAction и DeleteAction убраны.
             ])
-            ->bulkActions([
-                Tables\Actions\BulkActionGroup::make([
-                    Tables\Actions\DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->bulkActions([]);
     }
 }

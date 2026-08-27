@@ -20,21 +20,43 @@ class OperatorTasks extends BaseWidget
     {
         return $table
             ->query(
-                // Показываем задачи, которые еще не завершены
-                ProductionTask::query()->where('status', '!=', 'finished')->latest()
+                // ИСПРАВЛЕНО: реальный статус завершения — 'completed', а не
+                // 'finished'. Такого значения в БД никогда не бывает (см.
+                // миграцию fix_status_in_production_tasks_table), поэтому
+                // раньше это условие было истинно всегда и завершённые
+                // задачи никогда не пропадали из сменного задания.
+                ProductionTask::query()->where('status', '!=', 'completed')->latest()
             )
             ->columns([
                 Tables\Columns\TextColumn::make('order.order_number')
                     ->label('Заказ')
                     ->weight('bold'),
 
-                Tables\Columns\TextColumn::make('order.product.name')
-                    ->label('Изделие'),
+                // ИСПРАВЛЕНО: order.product.name почти всегда пусто — заказы
+                // многопозиционные (orderItems), а старое поле Order::product_id
+                // оставлено только для обратной совместимости и не заполняется
+                // формой заказа. Показываем реальный состав заказа через orderItems.
+                Tables\Columns\TextColumn::make('order.orderItems')
+                    ->label('Изделие')
+                    ->getStateUsing(function (ProductionTask $record): string {
+                        $items = $record->order?->orderItems ?? collect();
+
+                        $names = $items
+                            ->map(fn ($item) => $item->product?->name)
+                            ->filter()
+                            ->unique();
+
+                        return $names->isNotEmpty() ? $names->implode(', ') : '—';
+                    }),
 
                 Tables\Columns\TextColumn::make('operation_name')
                     ->label('Этап обработки')
                     ->badge()
-                    ->color('gray'),
+                    ->color('gray')
+                    // ИСПРАВЛЕНО: убираем служебный префикс "🌟 Item: N |" /
+                    // "📦 Item: N |" из отображения. Сам $record->operation_name
+                    // в БД не меняется — только вид в таблице.
+                    ->formatStateUsing(fn (string $state): string => trim(preg_replace('/^[^\|]*\|\s*/u', '', $state))),
 
                 Tables\Columns\TextColumn::make('quantity_to_do')
                     ->label('План (шт)')
@@ -44,21 +66,21 @@ class OperatorTasks extends BaseWidget
                     ->label('Сделано (шт)')
                     ->alignCenter(),
 
-Tables\Columns\TextColumn::make('status')
-    ->label('Статус')
-    ->badge()
-    ->color(fn (string $state): string => match ($state) {
-        'pending' => 'gray',         // Добавили обработку статуса "В очереди"
-        'in_progress' => 'warning',  // Статус "В работе"
-        'completed' => 'success',    // Статус "Выполнен"
-        default => 'gray',           // Защита от падения (если статус неизвестен)
-    })
-    ->formatStateUsing(fn (string $state): string => match ($state) {
-        'pending' => '⏳ В очереди',
-        'in_progress' => '⚙️ В работе',
-        'completed' => '✅ Выполнен',
-        default => $state,           // Защита от падения! Выведет статус как есть
-    }),
+                Tables\Columns\TextColumn::make('status')
+                    ->label('Статус')
+                    ->badge()
+                    ->color(fn (string $state): string => match ($state) {
+                        'pending' => 'gray',
+                        'in_progress' => 'warning',
+                        'completed' => 'success',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'pending' => '⏳ В очереди',
+                        'in_progress' => '⚙️ В работе',
+                        'completed' => '✅ Выполнен',
+                        default => $state,
+                    }),
 
                 Tables\Columns\TextColumn::make('operator.name')
                     ->label('Исполнитель')
@@ -70,11 +92,13 @@ Tables\Columns\TextColumn::make('status')
                     ->label('Начать работу')
                     ->icon('heroicon-o-play')
                     ->color('warning')
-                    ->visible(fn (ProductionTask $record) => $record->status === 'waiting')
+                    // ИСПРАВЛЕНО: было 'waiting' — статуса с таким значением
+                    // в системе не существует, кнопка не показывалась никогда.
+                    ->visible(fn (ProductionTask $record) => $record->status === 'pending')
                     ->action(function (ProductionTask $record) {
                         $record->update([
-                            'status' => 'active',
-                            'operator_id' => auth()->id() // Назначаем текущего пользователя исполнителем
+                            'status' => 'in_progress', // ИСПРАВЛЕНО: было 'active'
+                            'operator_id' => auth()->id(), // теперь реально сохранится — поле в $fillable
                         ]);
 
                         Notification::make()
@@ -88,7 +112,9 @@ Tables\Columns\TextColumn::make('status')
                     ->label('Сдать работу')
                     ->icon('heroicon-o-check-circle')
                     ->color('success')
-                    ->visible(fn (ProductionTask $record) => $record->status === 'active' && $record->operator_id === auth()->id())
+                    // ИСПРАВЛЕНО: было 'active' — статуса с таким значением
+                    // в системе не существует, кнопка не показывалась никогда.
+                    ->visible(fn (ProductionTask $record) => $record->status === 'in_progress' && $record->operator_id === auth()->id())
                     ->form([
                         Forms\Components\TextInput::make('quantity_done')
                             ->label('Количество годных деталей (шт)')
@@ -103,9 +129,9 @@ Tables\Columns\TextColumn::make('status')
                     ])
                     ->action(function (ProductionTask $record, array $data) {
                         $record->update([
-                            'quantity_done' => $data['quantity_done'],
-                            'quantity_scrapped' => $data['quantity_scrapped'],
-                            'status' => 'finished',
+                            'quantity_done' => $data['quantity_done'], // теперь реально сохранится
+                            'quantity_scrapped' => $data['quantity_scrapped'], // теперь реально сохранится
+                            'status' => 'completed', // ИСПРАВЛЕНО: было 'finished'
                         ]);
 
                         // Логика: если это был финальный этап сборки, можно автоматически закрывать весь заказ.

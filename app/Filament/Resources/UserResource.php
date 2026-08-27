@@ -62,10 +62,50 @@ public static function form(Form $form): Form
     {
         return $table
             ->columns([
-                //
+                // ИСПРАВЛЕНО: массив колонок был полностью пустым — Filament
+                // не показывал ни одного поля в строках таблицы, из-за чего
+                // страница /admin/users выглядела так, будто данных нет.
+                Tables\Columns\TextColumn::make('name')
+                    ->label('ФИО')
+                    ->searchable()
+                    ->sortable(),
+
+                Tables\Columns\TextColumn::make('email')
+                    ->label('Email')
+                    ->searchable()
+                    ->sortable()
+                    ->copyable(),
+
+                Tables\Columns\TextColumn::make('role')
+                    ->label('Роль')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state): string => match ($state) {
+                        'admin' => '👑 Администратор системы',
+                        'director' => '📊 Директор предприятия',
+                        'manager' => '👨‍💼 Начальник цеха / Менеджер',
+                        'technologist' => '📐 Технолог (Конструктор BOM)',
+                        'storekeeper' => '📦 Заведующий складом',
+                        'worker' => '🛠️ Рабочий (Оператор / Станочник)',
+                        default => $state ?? '—',
+                    }),
+
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label('Добавлен')
+                    ->dateTime('d.m.Y H:i')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                //
+                Tables\Filters\SelectFilter::make('role')
+                    ->label('Роль')
+                    ->options([
+                        'admin' => '👑 Администратор системы',
+                        'director' => '📊 Директор предприятия',
+                        'manager' => '👨‍💼 Начальник цеха / Менеджер',
+                        'technologist' => '📐 Технолог (Конструктор BOM)',
+                        'storekeeper' => '📦 Заведующий складом',
+                        'worker' => '🛠️ Рабочий (Оператор / Станочник)',
+                    ]),
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),

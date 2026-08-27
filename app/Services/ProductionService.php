@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\ProductionTask;
 use App\Models\Material;
 use App\Models\MaterialHistory;
 use Illuminate\Support\Facades\DB;
@@ -230,6 +231,129 @@ class ProductionService
 
         return false;
     }
+
+    /**
+     * ЕДИНАЯ точка завершения технологической операции.
+     *
+     * Раньше эта логика была написана только внутри
+     * ProductionTasksRelationManager::table()->actions() (кнопка "Выполнить"
+     * на странице заказа), и дублировать её ещё раз для кнопки на дашборде
+     * означало бы в третий раз переписать одну и ту же логику списания
+     * материала — а именно из-за таких дублей в проекте уже несколько раз
+     * возникали расхождения (статусы, форматы operation_name и т.д.).
+     * Теперь и RelationManager, и Dashboard вызывают этот метод.
+     *
+     * @return array{
+     *     success: bool,
+     *     error: string|null,
+     *     order: \App\Models\Order|null,
+     *     order_completed: bool,
+     * }
+     */
+    public function completeProductionTask(ProductionTask $task): array
+    {
+        $order = $task->order;
+
+        if ($order && stripos($task->operation_name, 'Заготовительная') !== false) {
+            // $order->product всегда null для многопозиционных заказов
+            // (product_id больше не заполняется формой заказа). Ищем нужную
+            // деталь по SKU, зашитому в operation_name, обходя все позиции
+            // заказа и, рекурсивно, все компоненты сборок.
+            $targetProduct = $this->resolveProductForTask($order, $task->operation_name);
+
+            if (!$targetProduct) {
+                return [
+                    'success' => false,
+                    'error' => 'Не удалось определить деталь по названию операции — списание материала невозможно. Проверьте, что operation_name содержит артикул (SKU) детали.',
+                    'order' => $order,
+                    'order_completed' => false,
+                ];
+            }
+
+            if (!$this->hasMaterialsInBom($targetProduct)) {
+                return [
+                    'success' => false,
+                    'error' => 'Для обрабатываемой детали не настроены нормы расхода материалов (BOM). Списание невозможно.',
+                    'order' => $order,
+                    'order_completed' => false,
+                ];
+            }
+
+            $this->debitMaterialsFromReserve($order, $targetProduct);
+        }
+
+        $task->update(['status' => 'completed']);
+
+        $orderCompleted = false;
+
+        if ($order) {
+            if ($order->status === 'pending') {
+                $order->update(['status' => 'in_progress']);
+            }
+
+            $uncompletedTasksCount = $order->productionTasks()
+                ->where('id', '!=', $task->id)
+                ->where('status', '!=', 'completed')
+                ->count();
+
+            if ($uncompletedTasksCount === 0) {
+                $order->update(['status' => 'completed']);
+                $orderCompleted = true;
+            }
+        }
+
+        return [
+            'success' => true,
+            'error' => null,
+            'order' => $order,
+            'order_completed' => $orderCompleted,
+        ];
+    }
+
+    /**
+     * Находит конкретную деталь (Product), к которой относится технологическая задача,
+     * сопоставляя её SKU с текстом operation_name (в него SKU зашивается при генерации
+     * задач в CreateOrder::generateTasksForProduct(), например "... (чёртеж SKU-123)").
+     *
+     * Обходит все позиции многокомпонентного заказа (orderItems) и, если позиция —
+     * сборка, рекурсивно все входящие в неё компоненты.
+     */
+    public function resolveProductForTask(Order $order, string $operationName): ?Product
+    {
+        foreach ($order->orderItems as $item) {
+            if (!$item->product) {
+                continue;
+            }
+
+            $found = $this->findProductBySkuInText($item->product, $operationName);
+
+            if ($found) {
+                return $found;
+            }
+        }
+
+        return null;
+    }
+
+    protected function findProductBySkuInText(Product $product, string $text): ?Product
+    {
+        if ($product->sku && str_contains($text, (string) $product->sku)) {
+            return $product;
+        }
+
+        if ($product->type === 'assembly') {
+            foreach ($product->components as $component) {
+                $found = $this->findProductBySkuInText($component, $text);
+
+                if ($found) {
+                    return $found;
+                }
+            }
+        }
+
+        return null;
+    }
+
     /**
      * Расчет общего времени изготовления изделия (в минутах)
      */

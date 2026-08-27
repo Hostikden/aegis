@@ -44,7 +44,12 @@ class Dashboard extends BaseDashboard implements HasTable
                 Tables\Columns\TextColumn::make('operation_name')
                     ->label('Технологическая операция / Задача цеха')
                     ->weight('medium')
-                    ->searchable(),
+                    ->searchable()
+                    // Убираем служебный префикс "🌟 Item: N |" / "📦 Item: N |" из отображения —
+                    // сам номер итема уже выведен отдельной колонкой item_number выше.
+                    // $record->operation_name в БД остаётся прежним, так что вся логика
+                    // (поиск SKU, "Заготовительная", расчёт оставшегося времени) не затронута.
+                    ->formatStateUsing(fn (string $state): string => trim(preg_replace('/^[^\|]*\|\s*/u', '', $state))),
 
                 Tables\Columns\TextColumn::make('quantity_to_do')
                     ->label('План (шт)')
@@ -109,7 +114,15 @@ class Dashboard extends BaseDashboard implements HasTable
                             )
                             ->when(
                                 $data['product_name'],
-                                fn ($q, $val) => $q->whereHas('order.product', fn ($inner) => $inner->where('name', 'like', "%{$val}%"))
+                                // ИСПРАВЛЕНО: order.product всегда null для многопозиционных
+                                // заказов (Order::product_id — легаси-поле, форма заказа его
+                                // больше не заполняет, состав хранится в orderItems). Фильтр
+                                // никогда не находил совпадений. Ищем через реальную связь
+                                // order → orderItems → product.
+                                fn ($q, $val) => $q->whereHas(
+                                    'order.orderItems.product',
+                                    fn ($inner) => $inner->where('name', 'like', "%{$val}%")
+                                )
                             )
                             ->when(
                                 $data['operation_keyword'],
@@ -125,7 +138,68 @@ class Dashboard extends BaseDashboard implements HasTable
                     ->icon('heroicon-m-play')
                     ->color('warning')
                     ->visible(fn (ProductionTask $record) => $record->status === 'pending')
-                    ->action(fn (ProductionTask $record) => $record->update(['status' => 'in_progress'])),
+                    ->action(function (ProductionTask $record) {
+                        $record->update(['status' => 'in_progress']);
+
+                        // Для согласованности со страницей заказа: если заказ ещё
+                        // не начат, переводим его в "в работе" и отсюда тоже.
+                        $order = $record->order;
+                        if ($order && $order->status === 'pending') {
+                            $order->update(['status' => 'in_progress']);
+                        }
+                    }),
+
+                Tables\Actions\Action::make('dashboard_complete')
+                    ->label('Выполнить')
+                    ->icon('heroicon-m-check-circle')
+                    ->color('success')
+                    ->visible(fn (ProductionTask $record) => $record->status === 'in_progress')
+                    ->requiresConfirmation()
+                    ->modalHeading(function (ProductionTask $record): string {
+                        if (stripos($record->operation_name, 'Заготовительная') !== false) {
+                            return '🪓 Выполнение заготовительной операции';
+                        }
+                        return '✅ Завершение технологического этапа';
+                    })
+                    ->modalDescription(function (ProductionTask $record): string {
+                        if (stripos($record->operation_name, 'Заготовительная') !== false) {
+                            return 'Подтвердите выполнение этапа. Внимание: металл для этой детали будет автоматически снят с резерва и списан со склада!';
+                        }
+                        return 'Вы подтверждаете завершение данной технологической операции? Изменений на складе материалов не произойдет.';
+                    })
+                    ->action(function (ProductionTask $record) {
+                        // Та же логика, что и в ProductionTasksRelationManager (страница
+                        // заказа) — вынесена в ProductionService::completeProductionTask(),
+                        // чтобы списание материала, поиск детали по SKU и автозакрытие
+                        // заказа не пришлось поддерживать в двух местах отдельно.
+                        $service = app(\App\Services\ProductionService::class);
+                        $result = $service->completeProductionTask($record);
+
+                        if (!$result['success']) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('🚨 Операция заблокирована!')
+                                ->body($result['error'])
+                                ->danger()
+                                ->send();
+
+                            return;
+                        }
+
+                        if ($result['order_completed']) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('🎉 Заказ полностью готов!')
+                                ->body("Все технологические этапы выполнены. Заказ №{$result['order']->order_number} автоматически переведен в статус 'Выполнен'.")
+                                ->success()
+                                ->persistent()
+                                ->send();
+                        } else {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Успешно')
+                                ->body('Операция успешно завершена!')
+                                ->success()
+                                ->send();
+                        }
+                    }),
 
                 Tables\Actions\Action::make('view_order')
                     ->label('Открыть заказ')
