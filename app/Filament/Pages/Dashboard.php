@@ -30,7 +30,7 @@ class Dashboard extends BaseDashboard implements HasTable
             ->query(ProductionTask::query()->latest())
             ->columns([
                 Tables\Columns\TextColumn::make('item_number')
-                    ->label('ID Итема (Чертёж)')
+                    ->label('Item')
                     ->badge()
                     ->color('info')
                     ->fontFamily('mono')
