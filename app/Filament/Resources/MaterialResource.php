@@ -49,14 +49,6 @@ class MaterialResource extends Resource
                     ])->columns(2),
        Forms\Components\Section::make('Характеристики геометрии')
                     ->schema([
-                        Forms\Components\TextInput::make('length')
-                            ->label(fn (Get $get): string => $get('name') === 'Плита' ? 'Длина плиты (мм)' : 'Длина единицы / хлыста (м)')
-                            ->numeric()
-                            ->minValue(0)
-                            ->required()
-                            ->live(onBlur: true)
-                            ->disabled($isNotAdmin),
-
                         Forms\Components\TextInput::make('diameter')
                             ->label('Диаметр (мм)')
                             ->numeric()

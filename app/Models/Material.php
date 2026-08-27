@@ -13,7 +13,7 @@ class Material extends Model
     protected $fillable = [
         'name',
         'grade',
-        'length',
+
         'diameter',
         'thickness',
         'width',
