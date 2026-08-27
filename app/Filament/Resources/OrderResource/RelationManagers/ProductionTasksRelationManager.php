@@ -81,6 +81,20 @@ class ProductionTasksRelationManager extends RelationManager
                         'completed' => '✅ Выполнен',
                         default => $state,
                     }),
+
+                Tables\Columns\TextColumn::make('started_at')
+                    ->label('Начало')
+                    ->dateTime('d.m.Y H:i')
+                    ->placeholder('—')
+                    ->sortable()
+                    ->toggleable(),
+
+                Tables\Columns\TextColumn::make('completed_at')
+                    ->label('Окончание')
+                    ->dateTime('d.m.Y H:i')
+                    ->placeholder('—')
+                    ->sortable()
+                    ->toggleable(),
             ])
             ->filters([])
             ->headerActions([
