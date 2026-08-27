@@ -43,6 +43,107 @@ class ProductionService
     }
 
     /**
+     * Проверяет, началось ли уже реальное производство по заказу — то есть есть
+     * ли хотя бы один технологический этап со статусом "в работе" или "выполнен".
+     *
+     * Используется, чтобы не допустить автоматический пересчёт технологических
+     * задач поверх уже реального прогресса цеха при изменении количества в
+     * заказе на странице редактирования.
+     */
+    public function hasProductionStarted(Order $order): bool
+    {
+        return $order->productionTasks()->where('status', '!=', 'pending')->exists();
+    }
+
+    /**
+     * Полностью пересоздаёт технологические задачи заказа на основе его текущих
+     * позиций (orderItems) — вызывается при изменении количества на странице
+     * редактирования заказа. Безопасно вызывать ТОЛЬКО когда
+     * hasProductionStarted() === false, иначе будет удалён реальный прогресс
+     * производства (задачи "в работе"/"выполнено").
+     */
+    public function regenerateProductionTasksForOrder(Order $order): void
+    {
+        // Снимаем текущий резерв материалов перед пересчётом, чтобы не задвоить его
+        $this->cancelReservationForOrder($order);
+
+        // Удаляем старые технологические задачи заказа (все ещё в статусе "pending",
+        // это гарантировано вызывающим кодом через hasProductionStarted())
+        $order->productionTasks()->delete();
+
+        foreach ($order->orderItems as $item) {
+            if ($item->product) {
+                $this->generateTasksForProduct($order, $item->product, $item->quantity);
+            }
+        }
+
+        // Ставим материалы в резерв заново — уже под обновлённое количество
+        $this->reserveMaterialsForOrder($order);
+    }
+
+    /**
+     * Рекурсивный метод создания технологических задач для рабочих с расчётом Item ID.
+     *
+     * Перенесено сюда из CreateOrder::generateTasksForProduct(), чтобы одна и та же
+     * логика использовалась и при первичном создании заказа (CreateOrder::afterCreate),
+     * и при пересчёте после изменения количества (regenerateProductionTasksForOrder).
+     */
+    public function generateTasksForProduct(Order $order, Product $product, int $requiredQuantity): void
+    {
+        if ($product->type === 'detail') {
+            $maxItemNumber = ProductionTask::max('item_number');
+            $nextItemNumber = $maxItemNumber ? ($maxItemNumber + 1) : 10000;
+
+            if ($product->operations()->count() > 0) {
+                foreach ($product->operations as $operation) {
+                    $pieceTime = floatval($operation->piece_time ?? 0);
+                    $prepTime = floatval($operation->prep_time ?? 0);
+
+                    $order->productionTasks()->create([
+                        'item_number' => $nextItemNumber,
+                        'operation_name' => "🌟 Item: {$nextItemNumber} | Опер. {$operation->operation_number} [{$operation->operation_name}] — {$product->name} (чёртеж {$product->sku})",
+                        'equipment_type' => $operation->operation_name,
+                        'status' => 'pending',
+                        'quantity_to_do' => $requiredQuantity,
+                        'planned_minutes' => $prepTime + ($pieceTime * $requiredQuantity),
+                    ]);
+                }
+            } else {
+                $order->productionTasks()->create([
+                    'item_number' => $nextItemNumber,
+                    'operation_name' => "🌟 Item: {$nextItemNumber} | Производство детали: {$product->name} (чёртеж {$product->sku}) — Техпроцесс не задан!",
+                    'equipment_type' => null,
+                    'status' => 'pending',
+                    'quantity_to_do' => $requiredQuantity,
+                    'planned_minutes' => 0,
+                ]);
+            }
+        } elseif ($product->type === 'assembly') {
+            // Если в одной из позиций заказа указана сборка, бежим по её деталям
+            foreach ($product->components as $component) {
+                // Рассчитываем количество: сколько детали нужно на 1 узел * количество узлов в данной позиции
+                $totalComponentQuantity = $component->pivot->quantity * $requiredQuantity;
+
+                // Рекурсивно создаём задачи для каждого вложенного компонента
+                $this->generateTasksForProduct($order, $component, $totalComponentQuantity);
+            }
+
+            // Создаём финальную сборочную операцию для самого узла данной позиции
+            $maxItemNumber = ProductionTask::max('item_number');
+            $nextItemNumber = $maxItemNumber ? ($maxItemNumber + 1) : 10000;
+
+            $order->productionTasks()->create([
+                'item_number' => $nextItemNumber,
+                'operation_name' => "📦 Item: {$nextItemNumber} | Финальная сборка узла: {$product->name} (чёртеж {$product->sku})",
+                'equipment_type' => 'Сборка',
+                'status' => 'pending',
+                'quantity_to_do' => $requiredQuantity,
+                'planned_minutes' => 0,
+            ]);
+        }
+    }
+
+    /**
      * ШАГ 2: Умное точечное списание из резерва под конкретную выполняемую деталь
      */
     public function debitMaterialsFromReserve(Order $order, Product $specificProduct): void

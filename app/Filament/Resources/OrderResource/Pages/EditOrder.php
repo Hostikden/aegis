@@ -12,6 +12,65 @@ class EditOrder extends EditRecord
 {
     protected static string $resource = OrderResource::class;
 
+    /**
+     * Снимок количеств по product_id ДО сохранения формы — нужен, чтобы после
+     * сохранения понять, изменилось ли количество (или состав) позиций заказа,
+     * и требуется ли автоматический пересчёт технологических задач.
+     */
+    protected array $originalItemQuantities = [];
+
+    protected function beforeSave(): void
+    {
+        $this->originalItemQuantities = $this->record->orderItems()
+            ->pluck('quantity', 'product_id')
+            ->toArray();
+    }
+
+    /**
+     * Автоматический пересчёт необходимых деталей (технологических задач) при
+     * изменении количества изделий в заказе.
+     *
+     * Пересчёт выполняется только если по заказу ещё НИ ОДНА технологическая
+     * задача не взята "В работу" и не выполнена — иначе автоматическая
+     * перегенерация удалила бы реальный прогресс цеха. В этом случае вместо
+     * пересчёта показывается предупреждение с рекомендацией скорректировать
+     * задачи вручную.
+     */
+    protected function afterSave(): void
+    {
+        $order = $this->record->fresh('orderItems');
+
+        $newItemQuantities = $order->orderItems->pluck('quantity', 'product_id')->toArray();
+
+        if ($newItemQuantities === $this->originalItemQuantities) {
+            // Состав и количество позиций не менялись — пересчёт не нужен.
+            return;
+        }
+
+        $service = app(ProductionService::class);
+
+        if ($service->hasProductionStarted($order)) {
+            Notification::make()
+                ->title('⚠️ Количество изменено, пересчёт НЕ выполнен автоматически')
+                ->body('По заказу уже есть технологические этапы "в работе" или выполненные — автоматический пересчёт мог бы затереть реальный прогресс производства. Скорректируйте количество деталей и резерв материалов вручную на вкладке "Технологические этапы выполнения".')
+                ->warning()
+                ->persistent()
+                ->send();
+
+            return;
+        }
+
+        $service->regenerateProductionTasksForOrder($order);
+
+        Notification::make()
+            ->title('✅ Технологические этапы пересчитаны')
+            ->body('Количество деталей и объём необходимых материалов автоматически обновлены под новое количество в заказе.')
+            ->success()
+            ->send();
+
+        $this->refreshFormData([]);
+    }
+
     protected function getHeaderActions(): array
     {
         return [
