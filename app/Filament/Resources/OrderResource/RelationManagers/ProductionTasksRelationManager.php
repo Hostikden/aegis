@@ -2,8 +2,6 @@
 
 namespace App\Filament\Resources\OrderResource\RelationManagers;
 
-use App\Models\Order;
-use App\Models\Product;
 use App\Models\ProductionTask;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -127,72 +125,32 @@ class ProductionTasksRelationManager extends RelationManager
                     })
 
                     ->action(function (ProductionTask $record) {
-                        $order = $record->order;
                         $service = app(\App\Services\ProductionService::class);
+                        $result = $service->completeProductionTask($record);
 
-                        if ($order && stripos($record->operation_name, 'Заготовительная') !== false) {
-                            // ИСПРАВЛЕНО: $order->product всегда null для многопозиционных заказов
-                            // (product_id больше не заполняется формой заказа, см. OrderResource::form()
-                            // и orderItems-репитер). Ищем нужную деталь по SKU, зашитому в operation_name,
-                            // обходя все позиции заказа и, рекурсивно, все компоненты сборок.
-                            $targetProduct = $this->resolveProductForTask($order, $record->operation_name);
+                        if (!$result['success']) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('🚨 Операция заблокирована!')
+                                ->body($result['error'])
+                                ->danger()
+                                ->send();
 
-                            if (!$targetProduct) {
-                                \Filament\Notifications\Notification::make()
-                                    ->title('🚨 Операция заблокирована!')
-                                    ->body('Не удалось определить деталь по названию операции — списание материала невозможно. Проверьте, что operation_name содержит артикул (SKU) детали.')
-                                    ->danger()
-                                    ->send();
-
-                                return;
-                            }
-
-                            $hasMaterials = $service->hasMaterialsInBom($targetProduct);
-
-                            if (!$hasMaterials) {
-                                \Filament\Notifications\Notification::make()
-                                    ->title('🚨 Операция заблокирована!')
-                                    ->body('Для обрабатываемой детали не настроены нормы расхода материалов (BOM). Списание невозможно.')
-                                    ->danger()
-                                    ->send();
-
-                                return;
-                            }
-
-                            $service->debitMaterialsFromReserve($order, $targetProduct);
+                            return;
                         }
 
-                        // Сохраняем статус текущей задачи
-                        $record->update(['status' => 'completed']);
-
-                        if ($order) {
-                            if ($order->status === 'pending') {
-                                $order->update(['status' => 'in_progress']);
-                            }
-
-                            // Сверяем количество незакрытых технологических этапов
-                            $uncompletedTasksCount = $order->productionTasks()
-                                ->where('id', '!=', $record->id)
-                                ->where('status', '!=', 'completed')
-                                ->count();
-
-                            // Если все шаги закрыты — переводим сам заказ в выполненные!
-                            if ($uncompletedTasksCount === 0) {
-                                $order->update(['status' => 'completed']);
-
-                                \Filament\Notifications\Notification::make()
-                                    ->title('🎉 Заказ полностью готов!')
-                                    ->body("Все технологические этапы выполнены. Заказ №{$order->order_number} автоматически переведен в статус 'Выполнен'.")
-                                    ->success()
-                                    ->persistent()
-                                    ->send();
-                            } else {
-                                \Filament\Notifications\Notification::make()
-                                    ->title('Успешно')
-                                    ->body('Операция успешно завершена!')
-                                    ->success()
-                                    ->send();
-                            }
+                        if ($result['order_completed']) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('🎉 Заказ полностью готов!')
+                                ->body("Все технологические этапы выполнены. Заказ №{$result['order']->order_number} автоматически переведен в статус 'Выполнен'.")
+                                ->success()
+                                ->persistent()
+                                ->send();
+                        } else {
+                            \Filament\Notifications\Notification::make()
+                                ->title('Успешно')
+                                ->body('Операция успешно завершена!')
+                                ->success()
+                                ->send();
                         }
                     }),
 
@@ -204,49 +162,5 @@ class ProductionTasksRelationManager extends RelationManager
                     Tables\Actions\DeleteBulkAction::make(),
                 ]),
             ]);
-    }
-
-    /**
-     * Находит конкретную деталь (Product), к которой относится технологическая задача,
-     * сопоставляя её SKU с текстом operation_name (в него SKU зашивается при генерации
-     * задач в CreateOrder::generateTasksForProduct(), например "... (чёртеж SKU-123)").
-     *
-     * Обходит все позиции многокомпонентного заказа (orderItems) и, если позиция —
-     * сборка, рекурсивно все входящие в неё компоненты.
-     */
-    protected function resolveProductForTask(Order $order, string $operationName): ?Product
-    {
-        foreach ($order->orderItems as $item) {
-            if (!$item->product) {
-                continue;
-            }
-
-            $found = $this->findProductBySkuInText($item->product, $operationName);
-
-            if ($found) {
-                return $found;
-            }
-        }
-
-        return null;
-    }
-
-    protected function findProductBySkuInText(Product $product, string $text): ?Product
-    {
-        if ($product->sku && str_contains($text, (string) $product->sku)) {
-            return $product;
-        }
-
-        if ($product->type === 'assembly') {
-            foreach ($product->components as $component) {
-                $found = $this->findProductBySkuInText($component, $text);
-
-                if ($found) {
-                    return $found;
-                }
-            }
-        }
-
-        return null;
     }
 }
