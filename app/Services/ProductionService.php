@@ -61,11 +61,28 @@ class ProductionService
      * редактирования заказа. Безопасно вызывать ТОЛЬКО когда
      * hasProductionStarted() === false, иначе будет удалён реальный прогресс
      * производства (задачи "в работе"/"выполнено").
+     *
+     * @param array $previousItemQuantities Снимок [product_id => quantity] ДО того,
+     *   как форма была сохранена. ИСПРАВЛЕНО: раньше отмена старого резерва
+     *   считалась по $order->orderItems, но на момент вызова afterSave() Filament
+     *   уже успевает сохранить НОВОЕ количество в БД — то есть "отмена" на самом
+     *   деле вычитала объём по новому, а не по старому количеству. Из-за этого
+     *   при увеличении количества с материала списывалось больше резерва, чем
+     *   реально держал этот заказ, и задевало резервы ДРУГИХ заказов на тот же
+     *   материал. Теперь отмена всегда идёт по явно переданному снимку старых
+     *   количеств, а не по уже перезаписанным данным.
      */
-    public function regenerateProductionTasksForOrder(Order $order): void
+    public function regenerateProductionTasksForOrder(Order $order, array $previousItemQuantities = []): void
     {
-        // Снимаем текущий резерв материалов перед пересчётом, чтобы не задвоить его
-        $this->cancelReservationForOrder($order);
+        // Снимаем ИМЕННО СТАРЫЙ резерв (по количествам ДО правки), чтобы не задеть
+        // резервы других заказов на тот же материал.
+        if (!empty($previousItemQuantities)) {
+            $this->cancelReservationForQuantities($previousItemQuantities);
+        } else {
+            // Фолбэк на случай вызова без снимка (например, из другого места кода) —
+            // прежнее поведение, менее точное, но лучше, чем ничего.
+            $this->cancelReservationForOrder($order);
+        }
 
         // Удаляем старые технологические задачи заказа (все ещё в статусе "pending",
         // это гарантировано вызывающим кодом через hasProductionStarted())
@@ -79,6 +96,40 @@ class ProductionService
 
         // Ставим материалы в резерв заново — уже под обновлённое количество
         $this->reserveMaterialsForOrder($order);
+    }
+
+    /**
+     * Отменяет резерв материалов по явно переданному набору [product_id => quantity],
+     * а не по текущим (уже изменённым) позициям заказа. Используется
+     * regenerateProductionTasksForOrder(), чтобы корректно снять именно СТАРЫЙ
+     * резерв перед пересчётом под новое количество.
+     */
+    protected function cancelReservationForQuantities(array $itemQuantities): void
+    {
+        $allRequirements = [];
+
+        foreach ($itemQuantities as $productId => $quantity) {
+            $product = Product::find($productId);
+            if ($product) {
+                $itemRequirements = $this->calculateRequiredMaterials($product, $quantity);
+                foreach ($itemRequirements as $materialId => $volume) {
+                    if (!isset($allRequirements[$materialId])) {
+                        $allRequirements[$materialId] = 0;
+                    }
+                    $allRequirements[$materialId] += $volume;
+                }
+            }
+        }
+
+        DB::transaction(function () use ($allRequirements) {
+            foreach ($allRequirements as $materialId => $volume) {
+                $material = Material::find($materialId);
+                if ($material) {
+                    $newReserved = max(0, $material->reserved - $volume);
+                    $material->update(['reserved' => $newReserved]);
+                }
+            }
+        });
     }
 
     /**

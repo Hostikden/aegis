@@ -60,7 +60,7 @@ class EditOrder extends EditRecord
             return;
         }
 
-        $service->regenerateProductionTasksForOrder($order);
+        $service->regenerateProductionTasksForOrder($order, $this->originalItemQuantities);
 
         Notification::make()
             ->title('✅ Технологические этапы пересчитаны')
