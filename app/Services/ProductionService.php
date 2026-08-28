@@ -157,6 +157,10 @@ class ProductionService
                         'status' => 'pending',
                         'quantity_to_do' => $requiredQuantity,
                         'planned_minutes' => $prepTime + ($pieceTime * $requiredQuantity),
+                        // Новая задача встаёт в конец очереди своего типа оборудования —
+                        // дальше диспетчер может вручную поднять её выше на странице
+                        // "Планирование по оборудованию" (drag-and-drop).
+                        'queue_position' => $this->nextQueuePosition($operation->operation_name),
                     ]);
                 }
             } else {
@@ -190,8 +194,25 @@ class ProductionService
                 'status' => 'pending',
                 'quantity_to_do' => $requiredQuantity,
                 'planned_minutes' => 0,
+                'queue_position' => $this->nextQueuePosition('Сборка'),
             ]);
         }
+    }
+
+    /**
+     * Следующая свободная позиция в очереди для конкретного типа оборудования —
+     * новая задача встаёт в конец очереди этого типа. Для задач без техпроцесса
+     * (equipment_type = null) очерёдность не имеет смысла.
+     */
+    protected function nextQueuePosition(?string $equipmentType): ?int
+    {
+        if (!$equipmentType) {
+            return null;
+        }
+
+        $max = ProductionTask::where('equipment_type', $equipmentType)->max('queue_position');
+
+        return $max !== null ? $max + 1 : 1;
     }
 
     /**

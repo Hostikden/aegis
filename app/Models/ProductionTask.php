@@ -34,6 +34,7 @@ class ProductionTask extends Model
         'planned_minutes',
         'started_at',
         'completed_at',
+        'queue_position',
     ];
 
     protected $casts = [
