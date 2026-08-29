@@ -139,7 +139,15 @@ class Dashboard extends BaseDashboard implements HasTable
                     ->color('warning')
                     ->visible(fn (ProductionTask $record) => $record->status === 'pending')
                     ->action(function (ProductionTask $record) {
-                        $record->update(['status' => 'in_progress']);
+                        $record->update([
+                            'status' => 'in_progress',
+                            // ИСПРАВЛЕНО: эта кнопка (в отличие от кнопки "В работу" на
+                            // странице заказа) не фиксировала started_at — из-за этого
+                            // задачи, взятые в работу с главной инфопанели, всегда
+                            // показывали прочерк в колонке "Начало" и не попадали в
+                            // расчёт факта загрузки оборудования.
+                            'started_at' => $record->started_at ?? now(),
+                        ]);
 
                         // Для согласованности со страницей заказа: если заказ ещё
                         // не начат, переводим его в "в работе" и отсюда тоже.
