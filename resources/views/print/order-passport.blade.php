@@ -7,6 +7,10 @@
         /* Базовые стили для экрана */
         body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; margin: 0; padding: 20px; background-color: #f4f4f4; }
         .page { background: #fff; padding: 30px; margin: 0 auto 20px auto; width: 210mm; min-height: 297mm; box-shadow: 0 0 10px rgba(0,0,0,0.1); box-sizing: border-box; }
+        /* Лист "Производственный паспорт детали" печатается горизонтально (альбомная
+           ориентация A4) — на нём стало много узких колонок (Годно/Брак/Дата/
+           Исполнитель/Подпись), и вертикального листа для них не хватает. */
+        .page.page-landscape { width: 297mm; min-height: 210mm; }
         .drawing-container { display: flex; justify-content: center; align-items: center; width: 100%; height: 260mm; border: 1px dashed #ccc; overflow: hidden; }
         .drawing-container img { max-width: 100%; max-height: 100%; object-fit: contain; }
         .pdf-warning { font-weight: bold; color: #c53030; text-align: center; border: 2px solid #feb2b2; padding: 20px; background: #ffffff; }
@@ -24,10 +28,19 @@
         /* Стили строго для принтера (А4) */
         @media print {
             body { background: #fff; margin: 0; padding: 0; }
-            .page { width: 210mm; height: 297mm; margin: 0; padding: 15mm; page-break-after: always; box-shadow: none; }
+            .page { width: 210mm; height: 297mm; margin: 0; padding: 15mm; page-break-after: always; box-shadow: none; page: portrait-page; }
+            .page.page-landscape { width: 297mm; height: 210mm; page: landscape-page; }
             .page:last-child { page-break-after: avoid; }
             .drawing-container { border: none; }
         }
+
+        /* Именованные страницы для смешанной ориентации в одном документе:
+           лист паспорта печатается горизонтально, остальные листы (чертежи) —
+           как обычно, вертикально. Поддерживается в Chrome/Edge; в Firefox при
+           печати может понадобиться выбрать ориентацию вручную в диалоге печати. */
+        @page portrait-page { size: A4 portrait; }
+        @page landscape-page { size: A4 landscape; }
+        @page { size: A4 portrait; }
     </style>
 </head>
 <body>
@@ -68,32 +81,43 @@
     @endif
 
     {{-- СЛЕДУЮЩИЙ ЛИСТ: Сопроводительный паспорт и Технологический маршрут --}}
-    <div class="page">
-        <div class="title-block">Производственный паспорт детали</div>
+    <div class="page page-landscape">
+        <div class="title-block">Сопроводительный лист</div>
 
         {{-- Сетка параметров шапки --}}
         <table class="header-table">
             <tr>
-                <td style="width: 35%;"><strong>Заказ на производство:</strong><br><span style="font-size: 18px; font-weight: bold;">№ {{ $order->order_number }}</span></td>
-                <td style="width: 30%;"><strong>Уникальный ID (Item):</strong><br><span style="font-size: 18px; font-weight: bold; color: #0284c7;">#{{ $item['item_number'] }}</span></td>
-                <td style="width: 35%;"><strong>Срок сдачи (Дедлайн):</strong><br><span style="font-size: 16px; font-weight: bold;">{{ $order->deadline ? $order->deadline->format('d.m.Y') : '-' }}</span></td>
+                <td style="width: 25%;"><strong>Заказ:</strong><br>№ {{ $order->order_number }}</td>
+                <td style="width: 25%;"><strong>Items:</strong><br>#{{ $item['item_number'] }}</td>
+                <td style="width: 25%;"><strong>Дата начала:</strong><br>{{ $order->created_at->format('d.m.Y') }}</td>
+                <td style="width: 25%;"><strong>Срок сдачи:</strong><br>{{ $order->deadline ? $order->deadline->format('d.m.Y') : '-' }}</td>
             </tr>
             <tr>
-                <td><strong>Наименование детали:</strong><br>{{ $item['product']->name }}</td>
-                <td><strong>Чертеж / Артикул:</strong><br><span style="font-family: mono; font-weight: bold;">{{ $item['product']->sku }}</span></td>
-                <td><strong>Объем партии в цех:</strong><br><span style="font-size: 18px; font-weight: bold;">{{ $item['quantity'] }} шт.</span></td>
+                <td colspan="2" style="width: 50%;"><strong>Наименование детали:</strong><br>{{ $item['product']->name }}</td>
+                <td style="width: 25%;"><strong>Чертеж / Артикул:</strong><br>{{ $item['product']->sku }}</td>
+                <td style="width: 25%;"><strong>Объем партии:</strong><br>{{ $item['quantity'] }} шт.</td>
             </tr>
             <tr>
-                <td colspan="3">
+                <td colspan="4">
                     <strong>Заготовка со склада (Нормы расхода сырья по BOM):</strong><br>
                     @if($item['materials']->count() > 0)
                         @foreach($item['materials'] as $matRecord)
-                            @php $mat = \App\Models\Material::find($matRecord->material_id); @endphp
+                            @php
+                                $mat = \App\Models\Material::find($matRecord->material_id);
+                                // Единица измерения зависит от типа заготовки — та же логика,
+                                // что и в остатках склада (Плита считается в м², покупные
+                                // изделия — в штуках, прокат/прочее — в метрах).
+                                $unit = match ($matRecord->material_type) {
+                                    'Плита' => 'м²',
+                                    'Покупное изделие' => 'шт',
+                                    default => 'м',
+                                };
+                            @endphp
                             • {{ $matRecord->material_type }} {{ $matRecord->material_grade }}
                             @if($mat && $mat->diameter) (Ø {{ $mat->diameter }} мм) @endif
                             @if($mat && $mat->thickness) (Толщина: {{ $mat->thickness }} мм) @endif
                             — длина заготовки: <strong>{{ $matRecord->detail_length ?? '-' }} мм</strong>
-                            (Расход на партию: <strong>{{ round($matRecord->consumption_rate * $item['quantity'], 4) }}</strong>)
+                            (Расход на партию: <strong>{{ round($matRecord->consumption_rate * $item['quantity'], 4) }} {{ $unit }}</strong>)
                             <br>
                         @endforeach
                     @else
@@ -104,18 +128,23 @@
         </table>
 
         <div style="font-size: 14px; font-weight: bold; margin-top: 20px; text-transform: uppercase; letter-spacing: 0.5px;">
-            Утвержденный технологический маршрут обработки:
+            Технологическая карта:
         </div>
 
         {{-- Таблица техпроцесса --}}
         <table class="route-table">
             <thead>
                 <tr>
-                    <th style="width: 8%;">Опер.</th>
-                    <th style="width: 25%;">Название операции</th>
-                    <th style="width: 45%;">Технологическое описание и переходы</th>
-                    <th style="width: 11%;">Тшт (мин)</th>
-                    <th style="width: 11%;">Тпз (мин)</th>
+                    <th style="width: 5%;">Опер.</th>
+                    <th style="width: 13%;">Название операции</th>
+                    <th style="width: 20%;">Технологическое описание и переходы</th>
+                    <th style="width: 5%;">Тшт (мин)</th>
+                    <th style="width: 5%;">Тпз (мин)</th>
+                    <th style="width: 7%;">Годно, шт</th>
+                    <th style="width: 7%;">Брак, шт</th>
+                    <th style="width: 10%;">Дата</th>
+                    <th style="width: 16%;">Исполнитель (Ф.И.О.)</th>
+                    <th style="width: 12%;">Подпись</th>
                 </tr>
             </thead>
             <tbody>
@@ -127,11 +156,17 @@
                             <td style="color: #444; font-size: 12px; line-height: 1.4;">{{ $oper->description ?? 'Выполнить согласно КД' }}</td>
                             <td class="center">{{ $oper->piece_time > 0 ? number_format($oper->piece_time, 2) : '-' }}</td>
                             <td class="center">{{ $oper->prep_time > 0 ? number_format($oper->prep_time, 2) : '-' }}</td>
+                            {{-- Графы ниже заполняются вручную в цехе после выполнения операции --}}
+                            <td style="height: 32px;"></td>
+                            <td style="height: 32px;"></td>
+                            <td style="height: 32px;"></td>
+                            <td style="height: 32px;"></td>
+                            <td style="height: 32px;"></td>
                         </tr>
                     @endforeach
                 @else
                     <tr>
-                        <td colspan="5" class="center" style="padding: 20px; color: #777; font-style: italic;">
+                        <td colspan="10" class="center" style="padding: 20px; color: #777; font-style: italic;">
                             Маршрутная карта не задана. Выполнить обработку по типовому технологическому регламенту.
                         </td>
                     </tr>
