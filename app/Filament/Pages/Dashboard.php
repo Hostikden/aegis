@@ -173,7 +173,7 @@ class Dashboard extends BaseDashboard implements HasTable
                         if (stripos($record->operation_name, 'Заготовительная') !== false) {
                             return 'Подтвердите выполнение этапа. Внимание: металл для этой детали будет автоматически снят с резерва и списан со склада!';
                         }
-                        return 'Вы подтверждаете завершение данной технологической операции? Изменений на складе материалов не произойдет.';
+                        return 'Вы подтверждаете завершение данной технологической операции?';
                     })
                     ->action(function (ProductionTask $record) {
                         // Та же логика, что и в ProductionTasksRelationManager (страница
