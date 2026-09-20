@@ -301,18 +301,24 @@ class ProductResource extends Resource
                                     }),
                             ]),
 
-                    ])->columnSpan(['lg' => 2]),
+                    ])->columnSpan(['lg' => 3]),
 
                 // БОКОВАЯ ПАНЕЛЬ СТАТУСА
-                Forms\Components\Group::make()
-                    ->schema([
-                        Forms\Components\Section::make('Статус')
-                            ->schema([
-                                Forms\Components\Toggle::make('is_active')
-                                    ->label('Активно для производства')
-                                    ->default(true),
-                            ]),
-                    ])->columnSpan(['lg' => 1]),
+                // ВРЕМЕННО СКРЫТО по просьбе: блок "Активно для производства" пока
+                // не используется в логике проекта и визуально мешает на форме.
+                // Поле is_active в БД сохраняется (default: true), просто не
+                // показывается и не редактируется на форме. Чтобы вернуть блок —
+                // раскомментируй Forms\Components\Group ниже.
+                //
+                // Forms\Components\Group::make()
+                //     ->schema([
+                //         Forms\Components\Section::make('Статус')
+                //             ->schema([
+                //                 Forms\Components\Toggle::make('is_active')
+                //                     ->label('Активно для производства')
+                //                     ->default(true),
+                //             ]),
+                //     ])->columnSpan(['lg' => 1]),
 
             ])
             ->columns(3);
