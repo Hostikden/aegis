@@ -130,7 +130,19 @@ class ProductionTasksRelationManager extends RelationManager
                     ->icon('heroicon-m-check-circle')
                     ->color('success')
                     ->visible(fn (ProductionTask $record) => $record->status === 'in_progress')
-                    ->requiresConfirmation()
+
+                    // Перед завершением обязательно просим выбрать исполнителя —
+                    // нужно для учёта отработанного времени по сотрудникам
+                    // (см. страницу "Учёт времени работников").
+                    ->form([
+                        Forms\Components\Select::make('operator_id')
+                            ->label('Исполнитель')
+                            ->options(fn () => \App\Models\User::where('role', 'worker')->pluck('name', 'id'))
+                            ->searchable()
+                            ->native(false)
+                            ->required()
+                            ->placeholder('Выберите сотрудника из списка'),
+                    ])
 
                     ->modalHeading(function (ProductionTask $record): string {
                         if (stripos($record->operation_name, 'Заготовительная') !== false) {
@@ -146,7 +158,11 @@ class ProductionTasksRelationManager extends RelationManager
                         return 'Вы подтверждаете завершение данной технологической операции?';
                     })
 
-                    ->action(function (ProductionTask $record) {
+                    ->action(function (ProductionTask $record, array $data) {
+                        // Фиксируем, кто именно выполнил этап, ДО списания/завершения —
+                        // чтобы отчёт по времени сотрудников не остался с пустым исполнителем.
+                        $record->update(['operator_id' => $data['operator_id']]);
+
                         $service = app(\App\Services\ProductionService::class);
                         $result = $service->completeProductionTask($record);
 

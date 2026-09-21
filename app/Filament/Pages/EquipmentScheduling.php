@@ -5,6 +5,7 @@ namespace App\Filament\Pages;
 use App\Filament\Resources\OrderResource;
 use App\Models\ProductionTask;
 use App\Services\ProductionService;
+use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables;
@@ -158,9 +159,19 @@ class EquipmentScheduling extends Page implements HasTable
                     ->icon('heroicon-m-check-circle')
                     ->color('success')
                     ->visible(fn (ProductionTask $record) => $record->status === 'in_progress')
-                    ->requiresConfirmation()
+                    ->form([
+                        Forms\Components\Select::make('operator_id')
+                            ->label('Исполнитель')
+                            ->options(fn () => \App\Models\User::where('role', 'worker')->pluck('name', 'id'))
+                            ->searchable()
+                            ->native(false)
+                            ->required()
+                            ->placeholder('Выберите сотрудника из списка'),
+                    ])
                     ->modalHeading('✅ Завершение технологического этапа')
-                    ->action(function (ProductionTask $record) {
+                    ->action(function (ProductionTask $record, array $data) {
+                        $record->update(['operator_id' => $data['operator_id']]);
+
                         $service = app(ProductionService::class);
                         $result = $service->completeProductionTask($record);
 

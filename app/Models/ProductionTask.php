@@ -51,4 +51,13 @@ class ProductionTask extends Model
         return $this->belongsTo(Order::class);
     }
 
+    /**
+     * Связь: Кто из сотрудников выполнил этот технологический этап —
+     * используется страницей "Учёт времени работников".
+     */
+    public function operator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'operator_id');
+    }
+
 }

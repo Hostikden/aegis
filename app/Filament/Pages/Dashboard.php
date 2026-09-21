@@ -162,7 +162,15 @@ class Dashboard extends BaseDashboard implements HasTable
                     ->icon('heroicon-m-check-circle')
                     ->color('success')
                     ->visible(fn (ProductionTask $record) => $record->status === 'in_progress')
-                    ->requiresConfirmation()
+                    ->form([
+                        \Filament\Forms\Components\Select::make('operator_id')
+                            ->label('Исполнитель')
+                            ->options(fn () => \App\Models\User::where('role', 'worker')->pluck('name', 'id'))
+                            ->searchable()
+                            ->native(false)
+                            ->required()
+                            ->placeholder('Выберите сотрудника из списка'),
+                    ])
                     ->modalHeading(function (ProductionTask $record): string {
                         if (stripos($record->operation_name, 'Заготовительная') !== false) {
                             return '🪓 Выполнение заготовительной операции';
@@ -175,7 +183,9 @@ class Dashboard extends BaseDashboard implements HasTable
                         }
                         return 'Вы подтверждаете завершение данной технологической операции?';
                     })
-                    ->action(function (ProductionTask $record) {
+                    ->action(function (ProductionTask $record, array $data) {
+                        $record->update(['operator_id' => $data['operator_id']]);
+
                         // Та же логика, что и в ProductionTasksRelationManager (страница
                         // заказа) — вынесена в ProductionService::completeProductionTask(),
                         // чтобы списание материала, поиск детали по SKU и автозакрытие
