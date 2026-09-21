@@ -16,6 +16,8 @@ class Product extends Model
         'name',
         'type',
         'drawing_files', // Разрешили массовую запись массива чертежей
+        'assembly_piece_time', // Тшт на 1 узел (только для type = assembly)
+        'assembly_prep_time',  // Тпз на партию (только для type = assembly)
     ];
 
     /**

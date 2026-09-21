@@ -187,13 +187,20 @@ class ProductionService
             $maxItemNumber = ProductionTask::max('item_number');
             $nextItemNumber = $maxItemNumber ? ($maxItemNumber + 1) : 10000;
 
+            $assemblyPieceTime = floatval($product->assembly_piece_time ?? 0);
+            $assemblyPrepTime = floatval($product->assembly_prep_time ?? 0);
+
             $order->productionTasks()->create([
                 'item_number' => $nextItemNumber,
                 'operation_name' => "📦 Item: {$nextItemNumber} | Финальная сборка узла: {$product->name} (чёртеж {$product->sku})",
                 'equipment_type' => 'Сборка',
                 'status' => 'pending',
                 'quantity_to_do' => $requiredQuantity,
-                'planned_minutes' => 0,
+                // ИСПРАВЛЕНО: раньше здесь всегда стоял 0 — время на саму операцию
+                // сборки негде было указать. Теперь считается из полей
+                // assembly_piece_time / assembly_prep_time карточки сборки
+                // (секция "Время на финальную сборку" в ProductResource).
+                'planned_minutes' => $assemblyPrepTime + ($assemblyPieceTime * $requiredQuantity),
                 'queue_position' => $this->nextQueuePosition('Сборка'),
             ]);
         }
@@ -551,8 +558,11 @@ class ProductionService
                 $totalComponentQuantity = $component->pivot->quantity * $orderQuantity;
                 $totalMinutes += $this->calculateProductionTimeInMinutes($component, $totalComponentQuantity);
             }
-            // Настраиваемое время на финальную сборку самого узла (0 минут)
-            $totalMinutes += 0;
+            // Время на финальную сборку самого узла — берём из карточки сборки
+            // (assembly_piece_time/assembly_prep_time), а не жёстко 0.
+            $assemblyPieceTime = floatval($product->assembly_piece_time ?? 0);
+            $assemblyPrepTime = floatval($product->assembly_prep_time ?? 0);
+            $totalMinutes += $assemblyPrepTime + ($assemblyPieceTime * $orderQuantity);
         }
 
         return $totalMinutes;

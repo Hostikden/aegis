@@ -220,6 +220,31 @@ class ProductResource extends Resource
                                     ->dehydrated(false),
                             ]),
 
+                        // СЕКЦИЯ 3.1: ВРЕМЯ НА ФИНАЛЬНУЮ СБОРКУ
+                        Forms\Components\Section::make('Время на финальную сборку')
+                            ->description('Норма времени на саму операцию сборки узла (не путать со временем изготовления вложенных деталей — оно указывается в техпроцессе каждой детали отдельно)')
+                            ->visible(fn (Get $get) => $get('type') === 'assembly')
+                            ->schema([
+                                Forms\Components\Grid::make(2)
+                                    ->schema([
+                                        Forms\Components\TextInput::make('assembly_piece_time')
+                                            ->label('Штучное время Тшт (мин)')
+                                            ->helperText('Время на сборку 1 узла')
+                                            ->numeric()
+                                            ->default(0.00)
+                                            ->minValue(0)
+                                            ->prefix('⏱️'),
+
+                                        Forms\Components\TextInput::make('assembly_prep_time')
+                                            ->label('Подг.-закл. время Тпз (мин)')
+                                            ->helperText('Разовое время на партию (наладка стенда и т.д.)')
+                                            ->numeric()
+                                            ->default(0.00)
+                                            ->minValue(0)
+                                            ->prefix('⚙️'),
+                                    ]),
+                            ]),
+
                         // СЕКЦИЯ 4: ТЕХПРОЦЕСС
                         Forms\Components\Section::make('Технологический маршрут (Техпроцесс)')
                             ->description('Составьте пошаговый маршрут обработки детали и укажите нормы времени')
