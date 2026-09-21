@@ -584,51 +584,28 @@ class ProductionService
     /**
      * Расчет оставшегося времени работы по многокомпонентному заказу (в минутах)
      */
+    /**
+     * Расчет оставшегося времени работы по многокомпонентному заказу (в минутах).
+     *
+     * ИСПРАВЛЕНО: раньше это время пересчитывалось "с нуля" через хрупкий разбор
+     * текста operation_name (поиск чертежа/SKU внутри декоративной строки задачи
+     * и повторный подбор нужной операции по названию) — из-за этого малейшее
+     * расхождение форматов текста ломало подсчёт, а для финальной сборки время
+     * было отдельно захардкожено как 0 и никак не учитывало поля
+     * assembly_piece_time/assembly_prep_time. Каждая задача уже хранит свою
+     * корректную плановую трудоёмкость в planned_minutes (считается один раз
+     * при создании — см. generateTasksForProduct), поэтому остаток по заказу —
+     * это просто сумма planned_minutes у ещё не завершённых задач.
+     */
     public function calculateRemainingProductionTimeInMinutes(Order $order): float
     {
         if (in_array($order->status, ['completed', 'cancelled'])) {
             return 0;
         }
 
-        $remainingMinutes = 0;
-        $activeTasks = $order->productionTasks()->where('status', '!=', 'completed')->get();
-
-        foreach ($activeTasks as $task) {
-            foreach ($order->orderItems as $item) {
-                $product = $item->product;
-                if (!$product) continue;
-
-                // ИСПРАВЛЕНО: CreateOrder::generateTasksForProduct() пишет артикул в виде
-                // "(чёртеж {$product->sku})", а не "({$product->sku})" — из-за слова
-                // "чёртеж" внутри скобок старое сравнение никогда не совпадало, и
-                // оставшееся время всегда считалось нулевым.
-                if ($product->type === 'detail' && str_contains($task->operation_name, "(чёртеж {$product->sku})")) {
-                    foreach ($product->operations as $operation) {
-                        if (stripos($task->operation_name, $operation->operation_name) !== false) {
-                            $remainingMinutes += floatval($operation->prep_time ?? 0) + (floatval($operation->piece_time ?? 0) * $item->quantity);
-                            break 2;
-                        }
-                    }
-                } elseif ($product->type === 'assembly') {
-                    foreach ($product->components as $component) {
-                        if (str_contains($task->operation_name, "(чёртеж {$component->sku})")) {
-                            foreach ($component->operations as $operation) {
-                                if (stripos($task->operation_name, $operation->operation_name) !== false) {
-                                    $totalQty = $component->pivot->quantity * $item->quantity;
-                                    $remainingMinutes += floatval($operation->prep_time ?? 0) + (floatval($operation->piece_time ?? 0) * $totalQty);
-                                    break 3;
-                                }
-                            }
-                        }
-                    }
-                    if (stripos($task->operation_name, 'Финальная сборка узла') !== false && str_contains($task->operation_name, "{$product->name}")) {
-                        $remainingMinutes += 0;
-                    }
-                }
-            }
-        }
-
-        return $remainingMinutes;
+        return (float) $order->productionTasks()
+            ->where('status', '!=', 'completed')
+            ->sum('planned_minutes');
     }
 
     /**

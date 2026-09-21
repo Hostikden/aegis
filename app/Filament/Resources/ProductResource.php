@@ -54,6 +54,23 @@ class ProductResource extends Resource
                                     ->live(),
                             ])->columns(2),
 
+                        // СЕКЦИЯ 1.1: ЧЕРТЕЖИ
+                        Forms\Components\Section::make('Конструкторская документация')
+                            ->description('Загрузите чертёж (или несколько листов) — он будет автоматически подставлен в производственный паспорт при печати заказа. Поддерживаются изображения и PDF.')
+                            ->schema([
+                                Forms\Components\FileUpload::make('drawing_files')
+                                    ->label('Файлы чертежа')
+                                    ->disk('public')
+                                    ->directory('drawings')
+                                    ->multiple()
+                                    ->reorderable()
+                                    ->acceptedFileTypes(['image/png', 'image/jpeg', 'application/pdf'])
+                                    ->maxSize(20480) // 20 МБ на файл
+                                    ->downloadable()
+                                    ->openable()
+                                    ->helperText('Можно прикрепить несколько листов — при печати паспорта каждый выведется отдельной страницей, в том порядке, в котором они здесь расположены.'),
+                            ]),
+
                         // СЕКЦИЯ 2: BOM (МАТЕРИАЛЫ)
                         Forms\Components\Section::make('Нормы расхода сырья и комплектации (BOM)')
                             ->description('Выберите параметры материала и укажите габариты заготовки для авторасчета')
