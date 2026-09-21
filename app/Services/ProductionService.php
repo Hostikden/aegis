@@ -138,21 +138,35 @@ class ProductionService
      * Перенесено сюда из CreateOrder::generateTasksForProduct(), чтобы одна и та же
      * логика использовалась и при первичном создании заказа (CreateOrder::afterCreate),
      * и при пересчёте после изменения количества (regenerateProductionTasksForOrder).
+     *
+     * @param int|null $itemNumber Номер Item, единый для ВСЕЙ позиции заказа (в том
+     *   числе для всех вложенных деталей сборки и самой финальной сборки).
+     *   ИСПРАВЛЕНО: раньше каждая вложенная деталь и сама сборка получали
+     *   каждая СВОЙ отдельный item_number (номер сборки всегда оказывался на
+     *   1 больше номера её последней детали, просто по порядку создания
+     *   записей в БД). Теперь номер выделяется ОДИН РАЗ при первом
+     *   (верхнеуровневом) вызове — для конкретной позиции заказа — и
+     *   передаётся дальше во все рекурсивные вызовы для вложенных
+     *   компонентов, поэтому вся позиция целиком имеет один Item.
+     *   Параметр не передают явно снаружи — его выставляют только
+     *   рекурсивные вызовы этого же метода.
      */
-    public function generateTasksForProduct(Order $order, Product $product, int $requiredQuantity): void
+    public function generateTasksForProduct(Order $order, Product $product, int $requiredQuantity, ?int $itemNumber = null): void
     {
-        if ($product->type === 'detail') {
+        if ($itemNumber === null) {
             $maxItemNumber = ProductionTask::max('item_number');
-            $nextItemNumber = $maxItemNumber ? ($maxItemNumber + 1) : 10000;
+            $itemNumber = $maxItemNumber ? ($maxItemNumber + 1) : 10000;
+        }
 
+        if ($product->type === 'detail') {
             if ($product->operations()->count() > 0) {
                 foreach ($product->operations as $operation) {
                     $pieceTime = floatval($operation->piece_time ?? 0);
                     $prepTime = floatval($operation->prep_time ?? 0);
 
                     $order->productionTasks()->create([
-                        'item_number' => $nextItemNumber,
-                        'operation_name' => "🌟 Item: {$nextItemNumber} | Опер. {$operation->operation_number} [{$operation->operation_name}] — {$product->name} (чёртеж {$product->sku})",
+                        'item_number' => $itemNumber,
+                        'operation_name' => "🌟 Item: {$itemNumber} | Опер. {$operation->operation_number} [{$operation->operation_name}] — {$product->name} (чёртеж {$product->sku})",
                         'equipment_type' => $operation->operation_name,
                         'status' => 'pending',
                         'quantity_to_do' => $requiredQuantity,
@@ -165,8 +179,8 @@ class ProductionService
                 }
             } else {
                 $order->productionTasks()->create([
-                    'item_number' => $nextItemNumber,
-                    'operation_name' => "🌟 Item: {$nextItemNumber} | Производство детали: {$product->name} (чёртеж {$product->sku}) — Техпроцесс не задан!",
+                    'item_number' => $itemNumber,
+                    'operation_name' => "🌟 Item: {$itemNumber} | Производство детали: {$product->name} (чёртеж {$product->sku}) — Техпроцесс не задан!",
                     'equipment_type' => null,
                     'status' => 'pending',
                     'quantity_to_do' => $requiredQuantity,
@@ -174,25 +188,24 @@ class ProductionService
                 ]);
             }
         } elseif ($product->type === 'assembly') {
-            // Если в одной из позиций заказа указана сборка, бежим по её деталям
+            // Если в одной из позиций заказа указана сборка, бежим по её деталям —
+            // передаём ТОТ ЖЕ $itemNumber, чтобы вся позиция осталась одним Item.
             foreach ($product->components as $component) {
                 // Рассчитываем количество: сколько детали нужно на 1 узел * количество узлов в данной позиции
                 $totalComponentQuantity = $component->pivot->quantity * $requiredQuantity;
 
                 // Рекурсивно создаём задачи для каждого вложенного компонента
-                $this->generateTasksForProduct($order, $component, $totalComponentQuantity);
+                $this->generateTasksForProduct($order, $component, $totalComponentQuantity, $itemNumber);
             }
 
-            // Создаём финальную сборочную операцию для самого узла данной позиции
-            $maxItemNumber = ProductionTask::max('item_number');
-            $nextItemNumber = $maxItemNumber ? ($maxItemNumber + 1) : 10000;
-
+            // Создаём финальную сборочную операцию для самого узла данной позиции —
+            // с тем же $itemNumber, что и у всех её вложенных деталей.
             $assemblyPieceTime = floatval($product->assembly_piece_time ?? 0);
             $assemblyPrepTime = floatval($product->assembly_prep_time ?? 0);
 
             $order->productionTasks()->create([
-                'item_number' => $nextItemNumber,
-                'operation_name' => "📦 Item: {$nextItemNumber} | Финальная сборка узла: {$product->name} (чёртеж {$product->sku})",
+                'item_number' => $itemNumber,
+                'operation_name' => "📦 Item: {$itemNumber} | Финальная сборка узла: {$product->name} (чёртеж {$product->sku})",
                 'equipment_type' => 'Сборка',
                 'status' => 'pending',
                 'quantity_to_do' => $requiredQuantity,
