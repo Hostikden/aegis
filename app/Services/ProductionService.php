@@ -681,6 +681,56 @@ class ProductionService
     }
 
     /**
+     * Отчёт по учёту времени работников за период — сколько технологических
+     * этапов выполнил каждый сотрудник, и сколько фактического времени
+     * (started_at → completed_at) на это ушло.
+     *
+     * @return array<int, array{operator_id: int, name: string, tasks_count: int, planned_minutes: float, fact_minutes: float}>
+     */
+    public function getWorkerTimeReport(?\Carbon\Carbon $from = null, ?\Carbon\Carbon $to = null): array
+    {
+        $query = ProductionTask::query()
+            ->whereNotNull('operator_id')
+            ->where('status', 'completed')
+            ->whereNotNull('started_at')
+            ->whereNotNull('completed_at')
+            ->with('operator');
+
+        if ($from) {
+            $query->where('completed_at', '>=', $from->copy()->startOfDay());
+        }
+        if ($to) {
+            $query->where('completed_at', '<=', $to->copy()->endOfDay());
+        }
+
+        $report = [];
+
+        $query->get()->each(function (ProductionTask $task) use (&$report) {
+            $operatorId = $task->operator_id;
+
+            if (!isset($report[$operatorId])) {
+                $report[$operatorId] = [
+                    'operator_id' => $operatorId,
+                    'name' => $task->operator?->name ?? "Сотрудник #{$operatorId} (удалён)",
+                    'tasks_count' => 0,
+                    'planned_minutes' => 0.0,
+                    'fact_minutes' => 0.0,
+                ];
+            }
+
+            $report[$operatorId]['tasks_count']++;
+            $report[$operatorId]['planned_minutes'] += (float) $task->planned_minutes;
+            $report[$operatorId]['fact_minutes'] += $task->started_at->diffInMinutes($task->completed_at);
+        });
+
+        // Сортируем по убыванию фактически отработанного времени — сверху те,
+        // кто сделал больше всего.
+        usort($report, fn ($a, $b) => $b['fact_minutes'] <=> $a['fact_minutes']);
+
+        return array_values($report);
+    }
+
+    /**
      * Отформатировать минуты в красивую строку на основе 8-часового рабочего дня (смены)
      */
     public function formatMinutesToHumanTime(float $minutes): string
