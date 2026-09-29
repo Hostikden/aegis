@@ -41,19 +41,53 @@ class MaterialResource extends Resource
                             ->live()
                             ->disabled($isNotAdmin),
 
+                        Forms\Components\Select::make('steel_grade_id')
+                            ->label('Марка (из справочника)')
+                            ->relationship('steelGrade', 'name')
+                            ->searchable()
+                            ->preload()
+                            ->createOptionForm([
+                                Forms\Components\TextInput::make('name')->label('Марка')->required(),
+                                Forms\Components\TextInput::make('gost')->label('ГОСТ на марку'),
+                                Forms\Components\TextInput::make('density_kg_m3')->label('Плотность, кг/м³')->numeric()->required()->default(7850),
+                            ])
+                            ->helperText('Нужна для автоматического пересчёта веса (кг) в длину (м) при входном контроле')
+                            // При выборе марки из справочника автоматически подставляем её
+                            // название и в старое текстовое поле grade — старый код печати
+                            // паспорта и BOM продолжает работать как раньше, ничего не ломая.
+                            ->live()
+                            ->afterStateUpdated(function (Forms\Set $set, $state) {
+                                if ($state) {
+                                    $grade = \App\Models\SteelGrade::find($state);
+                                    if ($grade) {
+                                        $set('grade', $grade->name);
+                                    }
+                                }
+                            })
+                            ->disabled($isNotAdmin),
+
                         Forms\Components\TextInput::make('grade')
-                            ->label('Марка стали / Наименование изделия')
+                            ->label('Марка стали / Наименование изделия (текстом)')
                             ->placeholder('09Г2С / Болт М12х40, Подшипник 204')
+                            ->helperText('Подставляется автоматически при выборе марки выше. Используется в старых печатных формах.')
                             ->required()
                             ->disabled($isNotAdmin),
                     ])->columns(2),
        Forms\Components\Section::make('Характеристики геометрии')
                     ->schema([
                         Forms\Components\TextInput::make('diameter')
-                            ->label('Диаметр (мм)')
+                            ->label(fn (Get $get): string => $get('name') === 'Труба' ? 'Наружный диаметр (мм)' : 'Диаметр (мм)')
                             ->numeric()
                             ->required(fn (Get $get): bool => in_array($get('name'), ['Пруток', 'Труба']))
                             ->visible(fn (Get $get): bool => in_array($get('name'), ['Пруток', 'Труба']))
+                            ->disabled($isNotAdmin),
+
+                        Forms\Components\TextInput::make('wall_thickness')
+                            ->label('Толщина стенки (мм)')
+                            ->numeric()
+                            ->required(fn (Get $get): bool => $get('name') === 'Труба')
+                            ->visible(fn (Get $get): bool => $get('name') === 'Труба')
+                            ->helperText('Нужна для расчёта массы погонного метра трубы')
                             ->disabled($isNotAdmin),
 
                         Forms\Components\TextInput::make('thickness')
@@ -72,7 +106,7 @@ class MaterialResource extends Resource
                             ->disabled($isNotAdmin),
                     ])
                     ->visible(fn (Get $get): bool => filled($get('name')) && $get('name') !== 'Покупное изделие')
-                    ->columns(3),
+                    ->columns(4),
 
 
                 Forms\Components\Section::make('Складской остаток')
@@ -179,6 +213,7 @@ class MaterialResource extends Resource
     public static function getRelations(): array
     {
         return [
+            \App\Filament\Resources\MaterialResource\RelationManagers\LotsRelationManager::class,
             \App\Filament\Resources\MaterialResource\RelationManagers\HistoryRelationManager::class,
         ];
     }
