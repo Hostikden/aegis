@@ -117,4 +117,59 @@ class MaterialReceiptService
 
         return [$weightKg / $weightPerUnit, $nativeUnit];
     }
+
+    /**
+     * Завести партию под уже существующий остаток материала (из версии 1,
+     * где партий не было вообще). Партия создаётся без плавки и сертификата,
+     * с количеством, равным текущему Material::quantity — то есть НИЧЕГО не
+     * добавляет на склад, просто даёт уже имеющемуся остатку "дом" в виде
+     * партии, с которой дальше можно списывать (в том числе вручную через
+     * вкладку "История") так же, как с любой другой партией.
+     *
+     * @throws \RuntimeException если у материала уже есть хотя бы одна партия
+     *   (нет смысла заводить начальный остаток повторно), нечего заводить
+     *   (остаток нулевой), либо материал нельзя пересчитать в кг (для
+     *   проката — не привязана марка стали или не заполнены размеры).
+     */
+    public function createOpeningBalanceLot(Material $material): MaterialLot
+    {
+        if ($material->lots()->exists()) {
+            throw new \RuntimeException('У этого материала уже есть партии — начальный остаток заводить не нужно.');
+        }
+
+        if ($material->quantity <= 0) {
+            throw new \RuntimeException('Текущий остаток материала нулевой — заводить партию не из чего.');
+        }
+
+        if ($material->name === 'Покупное изделие') {
+            $weightKg = 0.0; // Покупные изделия по весу не учитываются, только поштучно.
+            $nativeUnit = 'шт';
+        } else {
+            $weightPerUnit = $material->calculateTheoreticalWeightPerUnit();
+
+            if (!$weightPerUnit || $weightPerUnit <= 0) {
+                throw new \RuntimeException(
+                    "Материал «{$material->name} {$material->grade}» нельзя пересчитать в кг: сначала привяжите марку стали и заполните диаметр/толщину стенки/толщину плиты в карточке материала."
+                );
+            }
+
+            $weightKg = $material->quantity * $weightPerUnit;
+            $nativeUnit = $material->name === 'Плита' ? 'м²' : 'м';
+        }
+
+        return MaterialLot::create([
+            'lot_number' => MaterialLot::generateNextLotNumber(),
+            'material_id' => $material->id,
+            'receipt_line_id' => null,
+            'melt_number' => null,
+            'certificate_number' => null,
+            'weight_kg' => $weightKg,
+            'remaining_weight_kg' => $weightKg,
+            'native_quantity' => $material->quantity,
+            'remaining_native_quantity' => $material->quantity,
+            'native_unit' => $nativeUnit,
+            'status' => 'available',
+            'received_at' => now(),
+        ]);
+    }
 }

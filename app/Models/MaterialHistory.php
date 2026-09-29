@@ -12,6 +12,7 @@ class MaterialHistory extends Model
 
     protected $fillable = [
         'material_id',
+        'material_lot_id',
         'type',
         'quantity',
         'description',
@@ -30,5 +31,14 @@ class MaterialHistory extends Model
     public function material(): BelongsTo
     {
         return $this->belongsTo(Material::class, 'material_id');
+    }
+
+    /**
+     * Связь: с какой именно партии списан материал (для ручного расхода) —
+     * чтобы остаток партии и общий остаток материала не расходились.
+     */
+    public function lot(): BelongsTo
+    {
+        return $this->belongsTo(MaterialLot::class, 'material_lot_id');
     }
 }

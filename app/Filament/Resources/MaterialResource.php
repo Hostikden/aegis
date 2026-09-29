@@ -200,6 +200,33 @@ class MaterialResource extends Resource
                     ]),
             ])
             ->actions([
+                Tables\Actions\Action::make('create_opening_lot')
+                    ->label('Завести партию')
+                    ->icon('heroicon-m-archive-box-arrow-down')
+                    ->color('warning')
+                    ->visible(fn (Material $record) => $record->lots()->doesntExist() && $record->quantity > 0)
+                    ->requiresConfirmation()
+                    ->modalHeading('Завести партию по текущему остатку?')
+                    ->modalDescription('Это НЕ добавит материал на склад — просто превратит уже существующий остаток в обычную партию (без плавки и сертификата, они неизвестны), чтобы с ним можно было работать так же, как с партиями из поступлений: видеть в списке партий и списывать вручную через историю.')
+                    ->action(function (Material $record) {
+                        try {
+                            app(\App\Services\MaterialReceiptService::class)->createOpeningBalanceLot($record);
+
+                            \Filament\Notifications\Notification::make()
+                                ->title('Партия заведена')
+                                ->body('Текущий остаток теперь оформлен как партия и виден на вкладке "Партии".')
+                                ->success()
+                                ->send();
+                        } catch (\RuntimeException $e) {
+                            \Filament\Notifications\Notification::make()
+                                ->title('🚨 Не удалось завести партию')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->persistent()
+                                ->send();
+                        }
+                    }),
+
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
             ])
