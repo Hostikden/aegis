@@ -22,6 +22,7 @@ class MaterialLot extends Model
         'remaining_native_quantity',
         'native_unit',
         'status',
+        'limitation_note',
         'received_at',
     ];
 

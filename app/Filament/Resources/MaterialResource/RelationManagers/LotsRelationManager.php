@@ -2,16 +2,21 @@
 
 namespace App\Filament\Resources\MaterialResource\RelationManagers;
 
+use App\Models\MaterialLot;
+use App\Services\MaterialReceiptService;
+use Filament\Forms;
+use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables;
 use Filament\Tables\Table;
 
 /**
- * Партии материала с прослеживаемостью до плавки/сертификата. Только для
- * просмотра — партии создаются исключительно проведением документа
- * "Поступление материалов" (ReceiptResource), вручную здесь не добавляются
- * и не редактируются, чтобы остаток веса и метража партии никогда не
- * разошёлся с тем, что реально проведено по складу.
+ * Партии материала с прослеживаемостью до плавки/сертификата. Партии
+ * создаются исключительно проведением документа "Поступление материалов"
+ * (ReceiptResource) — вручную здесь их не добавляют и не редактируют, чтобы
+ * остаток веса и метража партии никогда не разошёлся с тем, что реально
+ * проведено по складу. Единственное действие здесь — решение по партиям,
+ * оставшимся в карантине после входного контроля.
  */
 class LotsRelationManager extends RelationManager
 {
@@ -77,7 +82,50 @@ class LotsRelationManager extends RelationManager
             ])
             ->defaultSort('received_at', 'desc')
             ->headerActions([])
-            ->actions([])
+            ->actions([
+                Tables\Actions\Action::make('approve_quarantine')
+                    ->label('Разрешить к использованию')
+                    ->icon('heroicon-m-check-circle')
+                    ->color('success')
+                    ->visible(fn (MaterialLot $record) => $record->status === 'quarantine')
+                    ->form([
+                        Forms\Components\Textarea::make('comment')
+                            ->label('Основание (например, согласие заказчика)')
+                            ->required(),
+                    ])
+                    ->requiresConfirmation()
+                    ->modalHeading('Разрешить партию к использованию?')
+                    ->modalDescription('Остаток материала увеличится на количество этой партии — она станет доступна для резервирования в заказах.')
+                    ->action(function (MaterialLot $record, array $data) {
+                        app(MaterialReceiptService::class)->resolveQuarantineLot($record, true, $data['comment']);
+
+                        Notification::make()
+                            ->title('Партия разрешена к использованию')
+                            ->success()
+                            ->send();
+                    }),
+
+                Tables\Actions\Action::make('reject_quarantine')
+                    ->label('Забраковать окончательно')
+                    ->icon('heroicon-m-x-circle')
+                    ->color('danger')
+                    ->visible(fn (MaterialLot $record) => $record->status === 'quarantine')
+                    ->form([
+                        Forms\Components\Textarea::make('comment')
+                            ->label('Причина окончательной браковки')
+                            ->required(),
+                    ])
+                    ->requiresConfirmation()
+                    ->action(function (MaterialLot $record, array $data) {
+                        app(MaterialReceiptService::class)->resolveQuarantineLot($record, false, $data['comment']);
+
+                        Notification::make()
+                            ->title('Партия окончательно забракована')
+                            ->body('Рекомендуем оформить акт о несоответствии для этой партии (будет доступно на Этапе 4).')
+                            ->warning()
+                            ->send();
+                    }),
+            ])
             ->bulkActions([]);
     }
 }

@@ -24,6 +24,10 @@ class ReceiptLine extends Model
         'certificate_date',
         'certificate_attached',
         'notes',
+        'decision',
+        'decision_comment',
+        'inspected_by',
+        'inspected_at',
     ];
 
     protected $casts = [
@@ -32,6 +36,14 @@ class ReceiptLine extends Model
         'measured_length_m' => 'float',
         'certificate_date' => 'date',
         'certificate_attached' => 'boolean',
+        'inspected_at' => 'datetime',
+    ];
+
+    public const DECISIONS = [
+        'accept' => '✅ Принять',
+        'accept_with_limitation' => '⚠️ Принять с ограничением',
+        'quarantine' => '⏳ Карантин до решения',
+        'return' => '↩️ Вернуть поставщику',
     ];
 
     public function receipt(): BelongsTo
@@ -47,6 +59,33 @@ class ReceiptLine extends Model
     public function lot(): HasOne
     {
         return $this->hasOne(MaterialLot::class);
+    }
+
+    public function inspectionResults(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(InspectionResult::class);
+    }
+
+    public function inspectedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'inspected_by');
+    }
+
+    /**
+     * Пройдены ли ВСЕ пункты входного контроля (по одному результату на
+     * каждый пункт из InspectionResult::CHECKPOINTS).
+     */
+    public function isFullyInspected(): bool
+    {
+        return $this->inspectionResults()->count() === count(InspectionResult::CHECKPOINTS);
+    }
+
+    /**
+     * Есть ли хотя бы один непройденный пункт проверки.
+     */
+    public function hasFailedCheckpoint(): bool
+    {
+        return $this->inspectionResults()->where('result', 'fail')->exists();
     }
 
     /**

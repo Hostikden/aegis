@@ -69,70 +69,6 @@ class ReceiptResource extends Resource
                     ->columns(3)
                     ->disabled(fn ($livewire) => optional($livewire->record ?? null)->status === 'posted'),
 
-                Forms\Components\Section::make('Строки поступления')
-                    ->description('Каждая строка станет отдельной партией на складе после проведения документа. Вес указывается в кг, система сама пересчитает его в метры/м² по плотности марки.')
-                    ->schema([
-                        Forms\Components\Repeater::make('lines')
-                            ->relationship('lines')
-                            ->label('')
-                            ->schema([
-                                Forms\Components\Select::make('material_id')
-                                    ->label('Материал')
-                                    ->options(fn () => Material::with('steelGrade')->get()->mapWithKeys(
-                                        fn (Material $m) => [$m->id => "{$m->name} {$m->grade}" . ($m->diameter ? " Ø{$m->diameter}" : '') . ($m->thickness ? " S{$m->thickness}" : '')]
-                                    ))
-                                    ->searchable()
-                                    ->required()
-                                    ->columnSpan(2),
-
-                                Forms\Components\TextInput::make('declared_weight_kg')
-                                    ->label('Вес по накладной, кг')
-                                    ->numeric()
-                                    ->required()
-                                    ->minValue(0.01),
-
-                                Forms\Components\TextInput::make('actual_weight_kg')
-                                    ->label('Вес фактический (взвешенный), кг')
-                                    ->numeric()
-                                    ->helperText('Если не заполнено — примется вес по накладной'),
-
-                                Forms\Components\TextInput::make('pieces_count')
-                                    ->label('Кол-во штук')
-                                    ->numeric()
-                                    ->helperText('Обязательно для покупных изделий'),
-
-                                Forms\Components\TextInput::make('measured_length_m')
-                                    ->label('Замеренная длина хлыста, м')
-                                    ->numeric(),
-
-                                Forms\Components\TextInput::make('melt_number')
-                                    ->label('№ плавки'),
-
-                                Forms\Components\TextInput::make('supplier_lot_number')
-                                    ->label('№ партии поставщика'),
-
-                                Forms\Components\TextInput::make('certificate_number')
-                                    ->label('№ сертификата / документа о качестве'),
-
-                                Forms\Components\DatePicker::make('certificate_date')
-                                    ->label('Дата сертификата')
-                                    ->native(false),
-
-                                Forms\Components\Toggle::make('certificate_attached')
-                                    ->label('Сертификат приложен')
-                                    ->inline(false),
-
-                                Forms\Components\Textarea::make('notes')
-                                    ->label('Примечание')
-                                    ->columnSpanFull()
-                                    ->rows(2),
-                            ])
-                            ->columns(4)
-                            ->addActionLabel('+ Добавить строку')
-                            ->defaultItems(1),
-                    ])
-                    ->disabled(fn ($livewire) => optional($livewire->record ?? null)->status === 'posted'),
-
                 Forms\Components\Textarea::make('notes')
                     ->label('Примечание к документу')
                     ->rows(2)
@@ -225,6 +161,13 @@ class ReceiptResource extends Resource
                 Tables\Actions\DeleteAction::make()
                     ->visible(fn (Receipt $record) => $record->status === 'draft'),
             ]);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            \App\Filament\Resources\ReceiptResource\RelationManagers\LinesRelationManager::class,
+        ];
     }
 
     public static function getPages(): array
