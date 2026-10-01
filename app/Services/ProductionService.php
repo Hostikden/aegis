@@ -6,6 +6,7 @@ use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductionTask;
 use App\Models\Material;
+use App\Models\MaterialDebit;
 use App\Models\MaterialHistory;
 use Illuminate\Support\Facades\DB;
 
@@ -277,6 +278,59 @@ class ProductionService
 
                 if ($material->reserved <= 0) continue;
 
+                // ИСПРАВЛЕНО (Этап 4): раньше списание просто уменьшало общий
+                // Material::quantity, никак не трогая партии — сумма остатков
+                // по партиям постепенно превышала бы реальный остаток, а
+                // прослеживаемость "из какой плавки сделана деталь" была бы
+                // невозможна. Теперь списываем с конкретных партий по принципу
+                // FIFO (сначала самая старая по дате поступления), и по каждой
+                // затронутой партии создаём запись в MaterialDebit — это и есть
+                // прослеживаемость до плавки, которую можно напечатать в
+                // паспорте детали.
+                $remainingToDebit = $volumeToDebit;
+                $usedLotsDescription = [];
+
+                $availableLots = $material->lots()
+                    ->where('status', 'available')
+                    ->where('remaining_native_quantity', '>', 0)
+                    ->orderBy('received_at')
+                    ->get();
+
+                foreach ($availableLots as $lot) {
+                    if ($remainingToDebit <= 0.0001) {
+                        break;
+                    }
+
+                    $takeFromLot = min($lot->remaining_native_quantity, $remainingToDebit);
+                    $lot->debitNativeQuantity($takeFromLot);
+
+                    MaterialDebit::create([
+                        'order_id' => $order->id,
+                        'product_id' => $specificProduct->id,
+                        'material_lot_id' => $lot->id,
+                        'quantity' => $takeFromLot,
+                    ]);
+
+                    $usedLotsDescription[] = $lot->lot_number . ($lot->melt_number ? " (плавка {$lot->melt_number})" : ' (без плавки)') . ": " . round($takeFromLot, 3);
+
+                    $remainingToDebit -= $takeFromLot;
+                }
+
+                // Партий не хватило на весь объём (например, старый остаток из
+                // версии 1, для которого ещё не заведена начальная партия) —
+                // списываем недостающее без привязки к конкретной партии, чтобы
+                // не блокировать производство, но фиксируем это явно.
+                if ($remainingToDebit > 0.0001) {
+                    MaterialDebit::create([
+                        'order_id' => $order->id,
+                        'product_id' => $specificProduct->id,
+                        'material_lot_id' => null,
+                        'quantity' => $remainingToDebit,
+                    ]);
+
+                    $usedLotsDescription[] = "без партии: " . round($remainingToDebit, 3);
+                }
+
                 // Уменьшаем физический остаток на складе
                 $material->decrement('quantity', $volumeToDebit);
                 // Снимаем бронь строго в рамках зарезервированного объема
@@ -287,7 +341,7 @@ class ProductionService
                     'material_id' => $material->id,
                     'type' => 'deduction',
                     'quantity' => $volumeToDebit,
-                    'description' => "Автосписание под деталь \"{$specificProduct->name}\" (чертёж {$specificProduct->sku}) по заказу №{$order->order_number}",
+                    'description' => "Автосписание под деталь \"{$specificProduct->name}\" (чертёж {$specificProduct->sku}) по заказу №{$order->order_number}. Партии: " . implode('; ', $usedLotsDescription),
                 ]);
             }
         });

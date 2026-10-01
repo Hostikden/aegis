@@ -241,6 +241,17 @@ class LinesRelationManager extends RelationManager
                         }
                     }),
 
+                Tables\Actions\Action::make('create_nonconformity')
+                    ->label('Оформить акт')
+                    ->icon('heroicon-m-document-exclamation')
+                    ->color('danger')
+                    ->visible(fn (ReceiptLine $record) => $record->decision === 'return' || $record->hasFailedCheckpoint())
+                    ->url(fn (ReceiptLine $record) => \App\Filament\Resources\NonconformityResource::getUrl('create', [
+                        'receipt_line_id' => $record->id,
+                        'category' => 'other',
+                        'description' => $record->decision_comment,
+                    ])),
+
                 Tables\Actions\EditAction::make()
                     ->visible(fn () => $this->getOwnerRecord()->status === 'draft'),
 

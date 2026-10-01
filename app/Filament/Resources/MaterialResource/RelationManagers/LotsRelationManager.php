@@ -105,6 +105,16 @@ class LotsRelationManager extends RelationManager
                             ->send();
                     }),
 
+                Tables\Actions\Action::make('create_nonconformity')
+                    ->label('Оформить акт')
+                    ->icon('heroicon-m-document-exclamation')
+                    ->color('danger')
+                    ->visible(fn (MaterialLot $record) => in_array($record->status, ['quarantine', 'rejected']))
+                    ->url(fn (MaterialLot $record) => \App\Filament\Resources\NonconformityResource::getUrl('create', [
+                        'material_lot_id' => $record->id,
+                        'category' => 'other',
+                    ])),
+
                 Tables\Actions\Action::make('reject_quarantine')
                     ->label('Забраковать окончательно')
                     ->icon('heroicon-m-x-circle')

@@ -123,6 +123,34 @@
                     @else
                         <span style="color: #c53030; font-weight: bold;">⚠️ Внимание: нормы расхода материала (BOM) не настроены технологом!</span>
                     @endif
+
+                    @php
+                        // Прослеживаемость: с каких именно партий (плавок) реально
+                        // списан металл под эту деталь этого заказа — заполняется
+                        // автоматически при выполнении заготовительной операции
+                        // (ProductionService::debitMaterialsFromReserve). Пусто, пока
+                        // заготовительный этап ещё не выполнен.
+                        $usedDebits = \App\Models\MaterialDebit::where('order_id', $order->id)
+                            ->where('product_id', $item['product']->id)
+                            ->with('lot')
+                            ->get();
+                    @endphp
+                    @if($usedDebits->count() > 0)
+                        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #999;">
+                            <strong>Фактически использовано (прослеживаемость до плавки):</strong><br>
+                            @foreach($usedDebits as $debit)
+                                • {{ $debit->lot ? $debit->lot->lot_number : 'без партии' }}
+                                @if($debit->lot && $debit->lot->melt_number)
+                                    — плавка {{ $debit->lot->melt_number }}
+                                @endif
+                                @if($debit->lot && $debit->lot->certificate_number)
+                                    — сертификат № {{ $debit->lot->certificate_number }}
+                                @endif
+                                : <strong>{{ round($debit->quantity, 3) }}</strong>
+                                <br>
+                            @endforeach
+                        </div>
+                    @endif
                 </td>
             </tr>
         </table>
