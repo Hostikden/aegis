@@ -241,6 +241,14 @@ class LinesRelationManager extends RelationManager
                         }
                     }),
 
+                Tables\Actions\Action::make('print_inspection_act')
+                    ->label('Печать акта')
+                    ->icon('heroicon-m-printer')
+                    ->color('gray')
+                    ->visible(fn (ReceiptLine $record) => $record->decision !== null)
+                    ->url(fn (ReceiptLine $record) => route('receipt-lines.print-inspection-act', $record))
+                    ->openUrlInNewTab(),
+
                 Tables\Actions\Action::make('create_nonconformity')
                     ->label('Оформить акт')
                     ->icon('heroicon-m-document-exclamation')
