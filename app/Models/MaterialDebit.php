@@ -18,6 +18,7 @@ class MaterialDebit extends Model
     protected $fillable = [
         'order_id',
         'product_id',
+        'material_id',
         'material_lot_id',
         'quantity',
     ];
@@ -34,6 +35,11 @@ class MaterialDebit extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function material(): BelongsTo
+    {
+        return $this->belongsTo(Material::class);
     }
 
     public function lot(): BelongsTo

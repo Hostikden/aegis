@@ -307,6 +307,7 @@ class ProductionService
                     MaterialDebit::create([
                         'order_id' => $order->id,
                         'product_id' => $specificProduct->id,
+                        'material_id' => $material->id,
                         'material_lot_id' => $lot->id,
                         'quantity' => $takeFromLot,
                     ]);
@@ -324,6 +325,7 @@ class ProductionService
                     MaterialDebit::create([
                         'order_id' => $order->id,
                         'product_id' => $specificProduct->id,
+                        'material_id' => $material->id,
                         'material_lot_id' => null,
                         'quantity' => $remainingToDebit,
                     ]);
@@ -813,5 +815,28 @@ class ProductionService
         }
 
         return implode(' ', $result);
+    }
+
+    /**
+     * Отчёт по расходу материалов за период — для выгрузки в бухгалтерию.
+     * Источник данных — журнал MaterialDebit (Этап 4), где уже зафиксировано,
+     * с какой именно партии/плавки и под какую деталь списан материал.
+     *
+     * @return \Illuminate\Support\Collection<int, \App\Models\MaterialDebit>
+     */
+    public function getMaterialConsumptionReport(?\Carbon\Carbon $from = null, ?\Carbon\Carbon $to = null): \Illuminate\Support\Collection
+    {
+        $query = \App\Models\MaterialDebit::query()
+            ->with(['order', 'product', 'material', 'lot'])
+            ->orderBy('created_at');
+
+        if ($from) {
+            $query->where('created_at', '>=', $from->copy()->startOfDay());
+        }
+        if ($to) {
+            $query->where('created_at', '<=', $to->copy()->endOfDay());
+        }
+
+        return $query->get();
     }
 } // Конец класса ProductionService
